@@ -1,0 +1,878 @@
+import 'package:flutter/material.dart';
+
+void main() {
+  runApp(const KiranaAIApp());
+}
+
+class KiranaAIApp extends StatelessWidget {
+  const KiranaAIApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'KiranaAI',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF138A55),
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF5F8F6),
+        fontFamily: 'Arial',
+      ),
+      home: const KiranaHomePage(),
+    );
+  }
+}
+
+class KiranaHomePage extends StatefulWidget {
+  const KiranaHomePage({super.key});
+
+  @override
+  State<KiranaHomePage> createState() => _KiranaHomePageState();
+}
+
+class _KiranaHomePageState extends State<KiranaHomePage> {
+  int _selectedIndex = 0;
+  String _selectedLanguage = 'English';
+
+  final List<Map<String, dynamic>> _products = [
+    {
+      'name': 'Rice',
+      'category': 'Grains',
+      'quantity': '45 kg',
+      'icon': Icons.grass,
+      'color': Color(0xFFE6F4EA),
+      'status': 'In Stock',
+    },
+    {
+      'name': 'Cooking Oil',
+      'category': 'Essentials',
+      'quantity': '8 litres',
+      'icon': Icons.water_drop,
+      'color': Color(0xFFFFF0D5),
+      'status': 'Low Stock',
+    },
+    {
+      'name': 'Sugar',
+      'category': 'Groceries',
+      'quantity': '22 kg',
+      'icon': Icons.inventory_2,
+      'color': Color(0xFFE8EDFF),
+      'status': 'In Stock',
+    },
+    {
+      'name': 'Milk',
+      'category': 'Dairy',
+      'quantity': '12 packets',
+      'icon': Icons.local_drink,
+      'color': Color(0xFFFFE9E9),
+      'status': 'Check Expiry',
+    },
+  ];
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _showAddProductDialog() {
+    final nameController = TextEditingController();
+    final quantityController = TextEditingController();
+    final categoryController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Add New Product'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Product name',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: categoryController,
+                  decoration: const InputDecoration(
+                    labelText: 'Category',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: quantityController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Quantity',
+                    hintText: 'Example: 10 kg',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final name = nameController.text.trim();
+                final category = categoryController.text.trim();
+                final quantity = quantityController.text.trim();
+
+                if (name.isEmpty ||
+                    category.isEmpty ||
+                    quantity.isEmpty) {
+                  _showMessage('Please fill in all fields.');
+                  return;
+                }
+
+                setState(() {
+                  _products.add({
+                    'name': name,
+                    'category': category,
+                    'quantity': quantity,
+                    'icon': Icons.inventory_2,
+                    'color': const Color(0xFFE8EDFF),
+                    'status': 'In Stock',
+                  });
+                });
+
+                Navigator.pop(dialogContext);
+                _showMessage('$name added to inventory.');
+              },
+              child: const Text('Add Product'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showVoiceAssistant() {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFE0F4E8),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.mic,
+                  size: 42,
+                  color: Color(0xFF138A55),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Talk to KiranaAI',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Voice assistance will help you manage your shop.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Example commands:\n'
+                '"Show low-stock products"\n'
+                '"Add 10 kg of rice"\n'
+                '"Check products nearing expiry"',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _showMessage(
+                    'Voice recognition will be connected in a later step.',
+                  );
+                },
+                icon: const Icon(Icons.mic),
+                label: const Text('Start Voice Assistant'),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 26),
+      decoration: const BoxDecoration(
+        color: Color(0xFF138A55),
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(28),
+          bottomRight: Radius.circular(28),
+        ),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: const Icon(
+                  Icons.storefront,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'KiranaAI',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 23,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      'Your smart shop assistant',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuButton<String>(
+                icon: const Icon(
+                  Icons.language,
+                  color: Colors.white,
+                  size: 27,
+                ),
+                tooltip: 'Choose language',
+                onSelected: (value) {
+                  setState(() {
+                    _selectedLanguage = value;
+                  });
+                  _showMessage('Selected language: $value');
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'English',
+                    child: Text('English'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'Kannada',
+                    child: Text('ಕನ್ನಡ - Kannada'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'Hindi',
+                    child: Text('हिन्दी - Hindi'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'Tamil',
+                    child: Text('தமிழ் - Tamil'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'Telugu',
+                    child: Text('తెలుగు - Telugu'),
+                  ),
+                ],
+              ),
+              IconButton(
+                onPressed: () {
+                  _showMessage('Notifications will appear here.');
+                },
+                icon: const Icon(
+                  Icons.notifications_outlined,
+                  color: Colors.white,
+                  size: 27,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Good day, Shop Owner!',
+                        style: TextStyle(
+                          color: Color(0xFF647067),
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Manage your shop\nwith confidence.',
+                        style: TextStyle(
+                          color: Color(0xFF17251C),
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Language: $_selectedLanguage',
+                        style: const TextStyle(
+                          color: Color(0xFF138A55),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Icon(
+                  Icons.store_mall_directory,
+                  size: 75,
+                  color: Color(0xFF138A55),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionTitle(String title, String action) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 19,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1A2B20),
+          ),
+        ),
+        TextButton(
+          onPressed: () {
+            setState(() {
+              _selectedIndex = 1;
+            });
+          },
+          child: Text(action),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatCard({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color color,
+    required String subtitle,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE8EEE9)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Icon(icon, color: const Color(0xFF138A55)),
+          ),
+          const SizedBox(height: 15),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 25,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF17251C),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            subtitle,
+            style: const TextStyle(
+              color: Color(0xFF78847B),
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickAction({
+    required String title,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(17),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(17),
+          border: Border.all(color: const Color(0xFFE8EEE9)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Icon(
+                icon,
+                color: const Color(0xFF138A55),
+                size: 25,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductCard(Map<String, dynamic> product) {
+    final String status = product['status'] as String;
+    final bool needsAttention = status != 'In Stock';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: const Color(0xFFE8EEE9)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: product['color'] as Color,
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Icon(
+              product['icon'] as IconData,
+              color: const Color(0xFF138A55),
+              size: 27,
+            ),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  product['name'] as String,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  product['category'] as String,
+                  style: const TextStyle(
+                    color: Color(0xFF78847B),
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  product['quantity'] as String,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 9,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: needsAttention
+                  ? const Color(0xFFFFF0D5)
+                  : const Color(0xFFE0F4E8),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              status,
+              style: TextStyle(
+                color: needsAttention
+                    ? const Color(0xFF9A6500)
+                    : const Color(0xFF138A55),
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHomeContent() {
+    final int lowStockCount =
+        _products.where((p) => p['status'] == 'Low Stock').length;
+    final int expiryCount =
+        _products.where((p) => p['status'] == 'Check Expiry').length;
+
+    return ListView(
+      padding: EdgeInsets.zero,
+      children: [
+        _buildHeader(),
+        Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildSectionTitle('Shop Overview', 'View all'),
+              const SizedBox(height: 12),
+              GridView.count(
+                crossAxisCount: 2,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 1.08,
+                children: [
+                  _buildStatCard(
+                    title: 'Total Products',
+                    value: '${_products.length}',
+                    icon: Icons.inventory_2_outlined,
+                    color: const Color(0xFFE0F4E8),
+                    subtitle: 'Products tracked',
+                  ),
+                  _buildStatCard(
+                    title: 'Low Stock',
+                    value: '$lowStockCount',
+                    icon: Icons.trending_down,
+                    color: const Color(0xFFFFF0D5),
+                    subtitle: 'Need attention',
+                  ),
+                  _buildStatCard(
+                    title: 'Expiry Alerts',
+                    value: '$expiryCount',
+                    icon: Icons.event_busy,
+                    color: const Color(0xFFFFE9E9),
+                    subtitle: 'Check product dates',
+                  ),
+                  _buildStatCard(
+                    title: 'Shop Network',
+                    value: '0',
+                    icon: Icons.storefront_outlined,
+                    color: const Color(0xFFE8EDFF),
+                    subtitle: 'Connected shops',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              _buildSectionTitle('Quick Actions', ''),
+              const SizedBox(height: 12),
+              GridView.count(
+                crossAxisCount: 4,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisSpacing: 9,
+                childAspectRatio: 0.76,
+                children: [
+                  _buildQuickAction(
+                    title: 'Add Product',
+                    icon: Icons.add_box_outlined,
+                    color: const Color(0xFFE0F4E8),
+                    onTap: _showAddProductDialog,
+                  ),
+                  _buildQuickAction(
+                    title: 'Voice AI',
+                    icon: Icons.mic_none,
+                    color: const Color(0xFFE8EDFF),
+                    onTap: _showVoiceAssistant,
+                  ),
+                  _buildQuickAction(
+                    title: 'Purchasing',
+                    icon: Icons.shopping_cart_outlined,
+                    color: const Color(0xFFFFF0D5),
+                    onTap: () {
+                      _showMessage(
+                        'Smart purchasing will be added in a later step.',
+                      );
+                    },
+                  ),
+                  _buildQuickAction(
+                    title: 'Expiry',
+                    icon: Icons.calendar_month_outlined,
+                    color: const Color(0xFFFFE9E9),
+                    onTap: () {
+                      _showMessage(
+                        'Batch expiry tracking will be added in a later step.',
+                      );
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              _buildSectionTitle('Inventory', 'See all'),
+              const SizedBox(height: 10),
+              ..._products.map(_buildProductCard),
+              const SizedBox(height: 18),
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [
+                      Color(0xFF138A55),
+                      Color(0xFF075E3A),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Your shop, made smarter',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          SizedBox(height: 7),
+                          Text(
+                            'Use KiranaAI to plan stock and reduce waste.',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Icon(
+                      Icons.auto_awesome,
+                      color: Colors.white.withValues(alpha: 0.9),
+                      size: 38,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOtherPage({
+    required String title,
+    required String description,
+    required IconData icon,
+  }) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 95,
+              height: 95,
+              decoration: const BoxDecoration(
+                color: Color(0xFFE0F4E8),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                icon,
+                size: 48,
+                color: const Color(0xFF138A55),
+              ),
+            ),
+            const SizedBox(height: 22),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              description,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                color: Color(0xFF78847B),
+              ),
+            ),
+            const SizedBox(height: 22),
+            FilledButton.icon(
+              onPressed: () {
+                setState(() {
+                  _selectedIndex = 0;
+                });
+              },
+              icon: const Icon(Icons.home_outlined),
+              label: const Text('Back to Home'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final List<Widget> pages = [
+      _buildHomeContent(),
+      _buildOtherPage(
+        title: 'Inventory',
+        description:
+            'Manage products, stock quantities and product categories.',
+        icon: Icons.inventory_2_outlined,
+      ),
+      _buildOtherPage(
+        title: 'Smart Purchasing',
+        description:
+            'Purchase planning, supplier comparison and budget controls '
+            'will be developed in upcoming steps.',
+        icon: Icons.shopping_cart_outlined,
+      ),
+      _buildOtherPage(
+        title: 'Settings',
+        description:
+            'Shop profile, language, permissions and account settings.',
+        icon: Icons.settings_outlined,
+      ),
+    ];
+
+    return Scaffold(
+      body: SafeArea(
+        child: IndexedStack(
+          index: _selectedIndex,
+          children: pages,
+        ),
+      ),
+      floatingActionButton: _selectedIndex == 0
+          ? FloatingActionButton.extended(
+              onPressed: _showVoiceAssistant,
+              backgroundColor: const Color(0xFF138A55),
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.mic),
+              label: const Text('Talk to AI'),
+            )
+          : null,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: (index) {
+          setState(() {
+            _selectedIndex = index;
+          });
+        },
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home),
+            label: 'Home',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.inventory_2_outlined),
+            selectedIcon: Icon(Icons.inventory_2),
+            label: 'Inventory',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.shopping_cart_outlined),
+            selectedIcon: Icon(Icons.shopping_cart),
+            label: 'Purchasing',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: 'Settings',
+          ),
+        ],
+      ),
+    );
+  }
+}
