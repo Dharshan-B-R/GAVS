@@ -1,4 +1,11 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Float,
+    DateTime,
+    ForeignKey
+)
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -15,7 +22,10 @@ class StockMovement(Base):
         nullable=False
     )
 
-    movement_type = Column(String(50), nullable=False)
+    movement_type = Column(
+        String(50),
+        nullable=False
+    )
 
     quantity_change = Column(Float, nullable=False)
 
@@ -24,6 +34,23 @@ class StockMovement(Base):
     quantity_after = Column(Float, nullable=False)
 
     reason = Column(String(255), nullable=True)
+
+    # User who performed the movement
+    performed_by = Column(
+        Integer,
+        nullable=True
+    )
+
+    # Related transaction information
+    reference_type = Column(
+        String(50),
+        nullable=True
+    )
+
+    reference_id = Column(
+        Integer,
+        nullable=True
+    )
 
     created_at = Column(
         DateTime(timezone=True),
