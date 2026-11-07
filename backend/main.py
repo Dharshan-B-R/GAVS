@@ -5,7 +5,7 @@ from app.models.batch_verification import BatchVerification
 from app.models.supplier import Supplier
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
-
+from app.models.purchase_payment import PurchasePayment
 
 
 from app.database import Base, engine, get_db
@@ -16,7 +16,7 @@ from app.models.expiry_record import ExpiryRecord
 from datetime import date, timedelta, datetime, timezone
 import math
 import traceback
-
+from sqlalchemy import func
 from app.schemas.purchase import (
     PurchaseCreate,
     PurchaseResponse,
@@ -25,7 +25,12 @@ from app.schemas.purchase import (
 )
 
 
-
+# Purchase payment validation schemas
+from app.schemas.purchase_payment import (
+    PurchasePaymentCreate,
+    PurchasePaymentResponse,
+    PaymentMethod
+)
 # ---------------------------------------------------------
 # DATABASE INITIALIZATION
 # Purpose:
@@ -3095,4 +3100,133 @@ def get_purchase(
         raise HTTPException(
             status_code=500,
             detail="Unable to retrieve purchase"
+        )
+
+
+
+# ---------------------------------------------------------
+# API: Record Supplier Purchase Payment
+# Method: POST
+# Endpoint: /purchases/{purchase_id}/payments
+# Purpose:
+# Records full or partial payments against a purchase invoice.
+# Prevents overpayment and updates the invoice payment status.
+# ---------------------------------------------------------
+
+@app.post("/purchases/{purchase_id}/payments")
+def record_purchase_payment(
+    purchase_id: int,
+    payment_data: PurchasePaymentCreate,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Lock purchase to prevent concurrent overpayments
+        purchase = db.query(Purchase).filter(
+            Purchase.id == purchase_id
+        ).with_for_update().first()
+
+        if not purchase:
+            raise HTTPException(
+                status_code=404,
+                detail="Purchase invoice not found"
+            )
+
+        # Validate payment amount
+        amount = float(payment_data.amount)
+
+        if not math.isfinite(amount) or amount <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Payment amount must be greater than zero"
+            )
+
+        # Calculate previous payments
+        total_paid = db.query(
+            func.coalesce(
+                func.sum(PurchasePayment.amount), 0
+            )
+        ).filter(
+            PurchasePayment.purchase_id == purchase_id
+        ).scalar()
+
+        outstanding = purchase.total_amount - float(total_paid)
+
+        # Prevent overpayment
+        if amount > outstanding:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Payment exceeds outstanding balance of {outstanding:.2f}"
+            )
+
+        # Validate transaction reference for digital payments
+        payment_method = payment_data.payment_method.value
+
+        if (
+            payment_method in ["upi", "bank_transfer"]
+            and not payment_data.transaction_reference
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Transaction reference is required for digital payments"
+            )
+
+        # Create payment record
+        payment = PurchasePayment(
+            purchase_id=purchase.id,
+            amount=amount,
+            payment_method=payment_method,
+            transaction_reference=payment_data.transaction_reference,
+            notes=payment_data.notes
+        )
+
+        db.add(payment)
+        db.flush()
+
+        # Calculate updated payment status
+        updated_paid = float(total_paid) + amount
+        remaining = purchase.total_amount - updated_paid
+
+        if math.isclose(
+            updated_paid,
+            purchase.total_amount,
+            rel_tol=1e-9,
+            abs_tol=1e-7
+        ):
+            purchase.payment_status = "paid"
+            remaining = 0.0
+
+        elif updated_paid > 0:
+            purchase.payment_status = "partially_paid"
+
+        else:
+            purchase.payment_status = "pending"
+
+        db.commit()
+        db.refresh(payment)
+
+        return {
+            "message": "Purchase payment recorded successfully",
+            "payment_id": payment.id,
+            "purchase_id": purchase.id,
+            "payment_amount": payment.amount,
+            "payment_method": payment.payment_method,
+            "total_amount": purchase.total_amount,
+            "total_paid": updated_paid,
+            "outstanding_balance": remaining,
+            "payment_status": purchase.payment_status,
+            "paid_at": payment.paid_at
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception as error:
+        db.rollback()
+        print("Purchase payment error:", str(error))
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to record purchase payment"
         )

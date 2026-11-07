@@ -3,7 +3,7 @@
 # MODEL: Purchase
 # Purpose:
 # Stores supplier purchase transactions and invoice details.
-# Maintains relationships with supplier and purchase items.
+# Maintains relationships with supplier, items and payments.
 # ---------------------------------------------------------
 
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
@@ -54,10 +54,19 @@ class Purchase(Base):
         onupdate=func.now()
     )
 
+    # Relationship with supplier
     supplier = relationship("Supplier")
 
+    # Relationship with purchase items
     items = relationship(
         "PurchaseItem",
+        back_populates="purchase",
+        cascade="all, delete-orphan"
+    )
+
+    # Relationship with supplier payment records
+    payments = relationship(
+        "PurchasePayment",
         back_populates="purchase",
         cascade="all, delete-orphan"
     )
