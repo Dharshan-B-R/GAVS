@@ -6,7 +6,8 @@ from app.models.supplier import Supplier
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.purchase_payment import PurchasePayment
-
+from app.models.customer import Customer
+from app.models.khata_transaction import KhataTransaction
 
 from app.database import Base, engine, get_db
 from app.models.product import Product
@@ -16,7 +17,10 @@ from app.models.expiry_record import ExpiryRecord
 from datetime import date, timedelta, datetime, timezone
 import math
 import traceback
-from sqlalchemy import func
+from sqlalchemy import func, case
+from decimal import Decimal
+
+
 from app.schemas.purchase import (
     PurchaseCreate,
     PurchaseResponse,
@@ -24,6 +28,16 @@ from app.schemas.purchase import (
     PurchaseItemResponse
 )
 
+from app.schemas.khata_transaction import (
+    KhataTransactionCreate,
+    KhataTransactionResponse
+)
+
+from app.schemas.customer import (
+    CustomerCreate,
+    CustomerUpdate,
+    CustomerResponse
+)
 
 # Purchase payment validation schemas
 from app.schemas.purchase_payment import (
@@ -3229,4 +3243,910 @@ def record_purchase_payment(
         raise HTTPException(
             status_code=500,
             detail="Unable to record purchase payment"
+        )
+
+
+
+
+# ============================================================
+# CREATE CUSTOMER API
+# Purpose: Add a new customer to the KiranaAI customer database.
+# Method: POST
+# Endpoint: /customers
+# ============================================================
+
+@app.post("/customers", response_model=CustomerResponse)
+def create_customer(
+    customer_data: CustomerCreate,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate customer name
+        customer_name = customer_data.name.strip()
+
+        if not customer_name:
+            raise HTTPException(
+                status_code=400,
+                detail="Customer name cannot be empty"
+            )
+
+        # Create customer object
+        new_customer = Customer(
+            name=customer_name,
+            phone=customer_data.phone,
+            address=customer_data.address,
+            notes=customer_data.notes
+        )
+
+        # Save customer
+        db.add(new_customer)
+        db.commit()
+        db.refresh(new_customer)
+
+        return new_customer
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create customer"
+        )
+
+
+
+# ============================================================
+# GET ALL CUSTOMERS API
+# Purpose: Retrieve all customers from the database.
+# Method: GET
+# Endpoint: /customers
+# ============================================================
+
+@app.get("/customers", response_model=list[CustomerResponse])
+def get_all_customers(
+    db: Session = Depends(get_db)
+):
+    try:
+        customers = (
+            db.query(Customer)
+            .order_by(Customer.id.desc())
+            .all()
+        )
+
+        return customers
+
+    except Exception:
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve customers"
+        )
+
+# ============================================================
+# GET CUSTOMER BY ID API
+# Purpose: Retrieve one customer using their unique ID.
+# Method: GET
+# Endpoint: /customers/{customer_id}
+# ============================================================
+
+@app.get("/customers/{customer_id}", response_model=CustomerResponse)
+def get_customer_by_id(
+    customer_id: int,
+    db: Session = Depends(get_db)
+):
+    customer = db.query(Customer).filter(
+        Customer.id == customer_id
+    ).first()
+
+    if not customer:
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found"
+        )
+
+    return customer
+
+# ============================================================
+# UPDATE CUSTOMER API
+# Purpose: Update an existing customer's information.
+# Method: PUT
+# Endpoint: /customers/{customer_id}
+# ============================================================
+
+@app.put("/customers/{customer_id}", response_model=CustomerResponse)
+def update_customer(
+    customer_id: int,
+    customer_data: CustomerUpdate,
+    db: Session = Depends(get_db)
+):
+    try:
+        customer = db.query(Customer).filter(
+            Customer.id == customer_id
+        ).first()
+
+        if not customer:
+            raise HTTPException(
+                status_code=404,
+                detail="Customer not found"
+            )
+
+        update_data = customer_data.model_dump(exclude_unset=True)
+
+        if "name" in update_data:
+            if not update_data["name"] or not update_data["name"].strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Customer name cannot be empty"
+                )
+
+            update_data["name"] = update_data["name"].strip()
+
+        for field, value in update_data.items():
+            setattr(customer, field, value)
+
+        db.commit()
+        db.refresh(customer)
+
+        return customer
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update customer"
+        )
+
+# ============================================================
+# DEACTIVATE CUSTOMER API
+# Purpose: Deactivate a customer without deleting their history.
+# Method: PATCH
+# Endpoint: /customers/{customer_id}/deactivate
+# ============================================================
+
+@app.patch("/customers/{customer_id}/deactivate")
+def deactivate_customer(
+    customer_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+        customer = db.query(Customer).filter(
+            Customer.id == customer_id
+        ).first()
+
+        if not customer:
+            raise HTTPException(
+                status_code=404,
+                detail="Customer not found"
+            )
+
+        if not customer.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail="Customer is already inactive"
+            )
+
+        customer.is_active = False
+
+        db.commit()
+        db.refresh(customer)
+
+        return {
+            "message": "Customer deactivated successfully",
+            "customer_id": customer.id,
+            "name": customer.name,
+            "is_active": customer.is_active
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to deactivate customer"
+        )
+
+    # ============================================================
+# REACTIVATE CUSTOMER API
+# Purpose: Reactivate a previously deactivated customer.
+# Method: PATCH
+# Endpoint: /customers/{customer_id}/reactivate
+# ============================================================
+
+@app.patch("/customers/{customer_id}/reactivate")
+def reactivate_customer(
+    customer_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+        customer = db.query(Customer).filter(
+            Customer.id == customer_id
+        ).first()
+
+        if not customer:
+            raise HTTPException(
+                status_code=404,
+                detail="Customer not found"
+            )
+
+        if customer.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail="Customer is already active"
+            )
+
+        customer.is_active = True
+
+        db.commit()
+        db.refresh(customer)
+
+        return {
+            "message": "Customer reactivated successfully",
+            "customer_id": customer.id,
+            "name": customer.name,
+            "is_active": customer.is_active
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to reactivate customer"
+        )
+
+    # ============================================================
+# FILTER CUSTOMERS API
+# Purpose: Retrieve customers based on active/inactive status.
+# Method: GET
+# Endpoint: /customers/status/{is_active}
+# ============================================================
+
+@app.get(
+    "/customers/status/{is_active}",
+    response_model=list[CustomerResponse]
+)
+def get_customers_by_status(
+    is_active: bool,
+    db: Session = Depends(get_db)
+):
+    try:
+        customers = (
+            db.query(Customer)
+            .filter(Customer.is_active == is_active)
+            .order_by(Customer.id.desc())
+            .all()
+        )
+
+        return customers
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve customers by status"
+        )
+
+
+
+    # ============================================================
+# CREATE KHATA TRANSACTION API
+# Purpose: Record customer credit (Udhar) and repayments.
+# Method: POST
+# Endpoint: /customers/{customer_id}/khata
+# ============================================================
+
+@app.post(
+    "/customers/{customer_id}/khata",
+    response_model=KhataTransactionResponse
+)
+def create_khata_transaction(
+    customer_id: int,
+    transaction_data: KhataTransactionCreate,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Lock customer record to prevent simultaneous balance updates
+        customer = (
+            db.query(Customer)
+            .filter(Customer.id == customer_id)
+            .with_for_update()
+            .first()
+        )
+
+        if not customer:
+            raise HTTPException(
+                status_code=404,
+                detail="Customer not found"
+            )
+
+        if not customer.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot record transactions for an inactive customer"
+            )
+
+        # Calculate existing customer credit
+        total_credit = (
+            db.query(func.coalesce(func.sum(KhataTransaction.amount), 0))
+            .filter(
+                KhataTransaction.customer_id == customer_id,
+                KhataTransaction.transaction_type == "credit"
+            )
+            .scalar()
+        )
+
+        # Calculate existing repayments
+        total_repayments = (
+            db.query(func.coalesce(func.sum(KhataTransaction.amount), 0))
+            .filter(
+                KhataTransaction.customer_id == customer_id,
+                KhataTransaction.transaction_type == "repayment"
+            )
+            .scalar()
+        )
+
+        outstanding_balance = total_credit - total_repayments
+
+        # Prevent repayment greater than outstanding balance
+        if transaction_data.transaction_type == "repayment":
+            if transaction_data.amount > outstanding_balance:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Repayment exceeds outstanding balance. "
+                        f"Current balance: {outstanding_balance}"
+                    )
+                )
+
+        # Create Khata transaction
+        new_transaction = KhataTransaction(
+            customer_id=customer_id,
+            transaction_type=transaction_data.transaction_type,
+            amount=transaction_data.amount,
+            description=transaction_data.description,
+            reference_number=transaction_data.reference_number
+        )
+
+        db.add(new_transaction)
+        db.commit()
+        db.refresh(new_transaction)
+
+        return new_transaction
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to record Khata transaction"
+        )
+
+
+# ============================================================
+# GET CUSTOMER KHATA BALANCE API
+# Purpose: Calculate total credit, repayments and outstanding.
+# Method: GET
+# Endpoint: /customers/{customer_id}/khata/balance
+# ============================================================
+
+@app.get("/customers/{customer_id}/khata/balance")
+def get_customer_khata_balance(
+    customer_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+        customer = db.query(Customer).filter(
+            Customer.id == customer_id
+        ).first()
+
+        if not customer:
+            raise HTTPException(
+                status_code=404,
+                detail="Customer not found"
+            )
+
+        total_credit = (
+            db.query(func.coalesce(func.sum(KhataTransaction.amount), 0))
+            .filter(
+                KhataTransaction.customer_id == customer_id,
+                KhataTransaction.transaction_type == "credit"
+            )
+            .scalar()
+        )
+
+        total_repayments = (
+            db.query(func.coalesce(func.sum(KhataTransaction.amount), 0))
+            .filter(
+                KhataTransaction.customer_id == customer_id,
+                KhataTransaction.transaction_type == "repayment"
+            )
+            .scalar()
+        )
+
+        outstanding = total_credit - total_repayments
+
+        return {
+            "customer_id": customer.id,
+            "customer_name": customer.name,
+            "total_credit": total_credit,
+            "total_repayments": total_repayments,
+            "outstanding_balance": outstanding
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to calculate customer Khata balance"
+        )
+
+
+# ============================================================
+# GET CUSTOMER KHATA HISTORY API
+# Purpose: Retrieve all credit and repayment transactions.
+# Method: GET
+# Endpoint: /customers/{customer_id}/khata/transactions
+# ============================================================
+
+@app.get(
+    "/customers/{customer_id}/khata/transactions",
+    response_model=list[KhataTransactionResponse]
+)
+def get_customer_khata_history(
+    customer_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+        customer = db.query(Customer).filter(
+            Customer.id == customer_id
+        ).first()
+
+        if not customer:
+            raise HTTPException(
+                status_code=404,
+                detail="Customer not found"
+            )
+
+        transactions = (
+            db.query(KhataTransaction)
+            .filter(
+                KhataTransaction.customer_id == customer_id
+            )
+            .order_by(KhataTransaction.created_at.desc())
+            .all()
+        )
+
+        return transactions
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve Khata history"
+        )
+
+    # ============================================================
+# GET ALL CUSTOMER OUTSTANDING DUES API
+# Purpose: Show customers who have pending Khata balances.
+# Method: GET
+# Endpoint: /khata/outstanding
+# ============================================================
+
+@app.get("/khata/outstanding")
+def get_all_customer_outstanding(db: Session = Depends(get_db)):
+    try:
+        results = (
+            db.query(
+                Customer.id.label("customer_id"),
+                Customer.name.label("customer_name"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                KhataTransaction.transaction_type == "credit",
+                                KhataTransaction.amount
+                            ),
+                            else_=0
+                        )
+                    ), 0
+                ).label("total_credit"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                KhataTransaction.transaction_type == "repayment",
+                                KhataTransaction.amount
+                            ),
+                            else_=0
+                        )
+                    ), 0
+                ).label("total_repayments")
+            )
+            .join(
+                KhataTransaction,
+                Customer.id == KhataTransaction.customer_id
+            )
+            .group_by(Customer.id, Customer.name)
+            .all()
+        )
+
+        outstanding_customers = []
+
+        for row in results:
+            balance = row.total_credit - row.total_repayments
+
+            if balance > 0:
+                outstanding_customers.append({
+                    "customer_id": row.customer_id,
+                    "customer_name": row.customer_name,
+                    "total_credit": row.total_credit,
+                    "total_repayments": row.total_repayments,
+                    "outstanding_balance": balance
+                })
+
+        return {
+            "total_customers_with_dues": len(outstanding_customers),
+            "total_outstanding_amount": sum(
+                item["outstanding_balance"]
+                for item in outstanding_customers
+            ),
+            "customers": outstanding_customers
+        }
+
+    except Exception:
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve outstanding customer dues"
+        )
+
+
+    
+# ============================================================
+# SUPPLIER DUES SUMMARY API
+# Purpose: Calculate total purchases, payments and outstanding
+#          dues for each supplier.
+# Method: GET
+# Endpoint: /suppliers/dues/summary
+# ============================================================
+
+@app.get("/suppliers/dues/summary")
+def get_supplier_dues_summary(
+    db: Session = Depends(get_db)
+):
+    try:
+        # Calculate total payments made for each purchase
+        payment_totals = (
+            db.query(
+                PurchasePayment.purchase_id.label("purchase_id"),
+                func.sum(PurchasePayment.amount).label("total_paid")
+            )
+            .group_by(PurchasePayment.purchase_id)
+            .subquery()
+        )
+
+        # Calculate supplier-wise purchase and payment totals
+        results = (
+            db.query(
+                Supplier.id.label("supplier_id"),
+                Supplier.name.label("supplier_name"),
+
+                func.coalesce(
+                    func.sum(Purchase.total_amount), 0
+                ).label("total_purchases"),
+
+                func.coalesce(
+                    func.sum(payment_totals.c.total_paid), 0
+                ).label("total_paid")
+            )
+            .join(
+                Purchase,
+                Purchase.supplier_id == Supplier.id
+            )
+            .outerjoin(
+                payment_totals,
+                payment_totals.c.purchase_id == Purchase.id
+            )
+            .group_by(Supplier.id, Supplier.name)
+            .all()
+        )
+
+        suppliers_with_dues = []
+
+        for row in results:
+            outstanding = row.total_purchases - row.total_paid
+
+            if outstanding > 0:
+                suppliers_with_dues.append({
+                    "supplier_id": row.supplier_id,
+                    "supplier_name": row.supplier_name,
+                    "total_purchases": row.total_purchases,
+                    "total_paid": row.total_paid,
+                    "outstanding_balance": outstanding
+                })
+
+        total_outstanding = sum(
+            item["outstanding_balance"]
+            for item in suppliers_with_dues
+        )
+
+        return {
+            "total_suppliers_with_dues": len(suppliers_with_dues),
+            "total_outstanding_amount": total_outstanding,
+            "suppliers": suppliers_with_dues
+        }
+
+    except Exception:
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve supplier dues summary"
+        )
+
+# ============================================================
+# GET INDIVIDUAL SUPPLIER DUES API
+# Purpose: Calculate purchase, payment and outstanding balance
+#          for one specific supplier.
+# Method: GET
+# Endpoint: /suppliers/{supplier_id}/dues
+# ============================================================
+
+@app.get("/suppliers/{supplier_id}/dues")
+def get_supplier_dues(
+    supplier_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+        supplier = db.query(Supplier).filter(
+            Supplier.id == supplier_id
+        ).first()
+
+        if not supplier:
+            raise HTTPException(
+                status_code=404,
+                detail="Supplier not found"
+            )
+
+        total_purchases = (
+            db.query(
+                func.coalesce(func.sum(Purchase.total_amount), 0)
+            )
+            .filter(Purchase.supplier_id == supplier_id)
+            .scalar()
+        )
+
+        total_paid = (
+            db.query(
+                func.coalesce(func.sum(PurchasePayment.amount), 0)
+            )
+            .join(
+                Purchase,
+                Purchase.id == PurchasePayment.purchase_id
+            )
+            .filter(Purchase.supplier_id == supplier_id)
+            .scalar()
+        )
+
+        outstanding = total_purchases - total_paid
+
+        return {
+            "supplier_id": supplier.id,
+            "supplier_name": supplier.name,
+            "total_purchases": total_purchases,
+            "total_paid": total_paid,
+            "outstanding_balance": outstanding
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve supplier dues"
+        )
+
+
+    # ============================================================
+# SUPPLIER PAYMENT HISTORY API
+# Purpose: Retrieve all payments made against a supplier's
+#          purchase invoices.
+# Method: GET
+# Endpoint: /suppliers/{supplier_id}/payments
+# ============================================================
+
+@app.get("/suppliers/{supplier_id}/payments")
+def get_supplier_payment_history(
+    supplier_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+        supplier = db.query(Supplier).filter(
+            Supplier.id == supplier_id
+        ).first()
+
+        if not supplier:
+            raise HTTPException(
+                status_code=404,
+                detail="Supplier not found"
+            )
+
+        payments = (
+            db.query(PurchasePayment, Purchase)
+            .join(
+                Purchase,
+                Purchase.id == PurchasePayment.purchase_id
+            )
+            .filter(Purchase.supplier_id == supplier_id)
+            .order_by(PurchasePayment.paid_at.desc())
+            .all()
+        )
+
+        payment_history = []
+
+        for payment, purchase in payments:
+            payment_history.append({
+                "payment_id": payment.id,
+                "purchase_id": purchase.id,
+                "invoice_number": purchase.invoice_number,
+                "amount": payment.amount,
+                "payment_method": payment.payment_method,
+                "transaction_reference": payment.transaction_reference,
+                "notes": payment.notes,
+                "paid_at": payment.paid_at
+            })
+
+        return {
+            "supplier_id": supplier.id,
+            "supplier_name": supplier.name,
+            "total_payments": len(payment_history),
+            "payments": payment_history
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve supplier payment history"
+        )
+
+    
+
+# ============================================================
+# OVERALL FINANCIAL SUMMARY API
+# Purpose: Summarize customer outstanding dues and supplier
+#          outstanding payments.
+# Method: GET
+# Endpoint: /finance/summary
+# ============================================================
+
+@app.get("/finance/summary")
+def get_financial_summary(
+    db: Session = Depends(get_db)
+):
+    try:
+        # Calculate total customer credit
+        total_customer_credit = (
+            db.query(
+                func.coalesce(func.sum(KhataTransaction.amount), 0)
+            )
+            .filter(
+                KhataTransaction.transaction_type == "credit"
+            )
+            .scalar()
+        )
+
+        # Calculate total customer repayments
+        total_customer_repayments = (
+            db.query(
+                func.coalesce(func.sum(KhataTransaction.amount), 0)
+            )
+            .filter(
+                KhataTransaction.transaction_type == "repayment"
+            )
+            .scalar()
+        )
+
+        # Convert customer amounts to Decimal
+        total_customer_credit = Decimal(str(total_customer_credit))
+        total_customer_repayments = Decimal(str(total_customer_repayments))
+
+        customer_outstanding = (
+            total_customer_credit - total_customer_repayments
+        )
+
+        # Calculate total supplier purchases
+        total_supplier_purchases = (
+            db.query(
+                func.coalesce(func.sum(Purchase.total_amount), 0)
+            )
+            .scalar()
+        )
+
+        # Calculate total supplier payments
+        total_supplier_payments = (
+            db.query(
+                func.coalesce(func.sum(PurchasePayment.amount), 0)
+            )
+            .scalar()
+        )
+
+        # Convert supplier amounts to Decimal
+        total_supplier_purchases = Decimal(str(total_supplier_purchases))
+        total_supplier_payments = Decimal(str(total_supplier_payments))
+
+        supplier_outstanding = (
+            total_supplier_purchases - total_supplier_payments
+        )
+
+        # Calculate net receivables/payables position
+        net_position = (
+            customer_outstanding - supplier_outstanding
+        )
+
+        return {
+            "customer_finances": {
+                "total_credit": total_customer_credit,
+                "total_repayments": total_customer_repayments,
+                "outstanding_receivables": customer_outstanding
+            },
+            "supplier_finances": {
+                "total_purchases": total_supplier_purchases,
+                "total_payments": total_supplier_payments,
+                "outstanding_payables": supplier_outstanding
+            },
+            "net_receivables_payables_position": net_position
+        }
+
+    except Exception:
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate financial summary"
         )
