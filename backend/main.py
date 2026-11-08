@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, Body
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from app.models.batch_verification import BatchVerification
@@ -8,6 +9,8 @@ from app.models.purchase_item import PurchaseItem
 from app.models.purchase_payment import PurchasePayment
 from app.models.customer import Customer
 from app.models.khata_transaction import KhataTransaction
+from app.models.sale import Sale
+from app.models.sale_item import SaleItem
 
 from app.database import Base, engine, get_db
 from app.models.product import Product
@@ -45,6 +48,16 @@ from app.schemas.purchase_payment import (
     PurchasePaymentResponse,
     PaymentMethod
 )
+
+
+# Sales transaction schemas
+from app.schemas.sale import (
+    SaleCreate,
+    SaleResponse,
+    SaleItemCreate,
+    SaleItemResponse
+)
+
 # ---------------------------------------------------------
 # DATABASE INITIALIZATION
 # Purpose:
@@ -68,6 +81,20 @@ app = FastAPI(
     title="KiranaAI API",
     description="Smart Inventory and Purchasing Backend",
     version="1.0.0"
+)
+
+# ---------------------------------------------------------
+# MIDDLEWARE: Cross-Origin Resource Sharing
+# Purpose: Allow the Flutter Web application to communicate
+# with the FastAPI backend during local development.
+# ---------------------------------------------------------
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -700,13 +727,12 @@ def get_saleable_stock(
 
 
 
+
 # ==========================================
 # EXPIRY RECORD AND SUPPLIER RETURN API
 # Purpose:
-# 1. Record disposal of expired stock
-# 2. Create supplier return requests
-# 3. Link returns with registered suppliers
-# 4. Reserve stock without immediate deduction
+# Create expiry action requests for disposal
+# or supplier return without deducting stock.
 #
 # Method: POST
 # Endpoint: /expiry-records
@@ -784,7 +810,7 @@ def create_expiry_record(
         ):
             raise HTTPException(400, "Invalid reference_id")
 
-        # Validate supplier information for returns
+        # Validate supplier information
         supplier = None
 
         if action == "supplier_return":
@@ -808,7 +834,6 @@ def create_expiry_record(
                     "Invalid supplier reference"
                 )
 
-            # Find active supplier
             supplier = db.query(Supplier).filter(
                 Supplier.id == supplier_id,
                 Supplier.is_active == True
@@ -853,28 +878,40 @@ def create_expiry_record(
                 "This batch has not expired yet"
             )
 
-        # Calculate existing return reservations
-        reserved_quantity = 0.0
-
-        if action == "supplier_return":
-            open_returns = db.query(ExpiryRecord).filter(
-                ExpiryRecord.batch_id == batch.id,
-                ExpiryRecord.action == "supplier_return",
-                ExpiryRecord.return_status.in_(
-                    ["pending", "accepted"]
-                )
-            ).all()
-
-            reserved_quantity = sum(
-                record.quantity for record in open_returns
+        # Calculate outstanding action reservations.
+        # Include pending owner approvals and approved
+        # actions that have not yet been completed.
+        open_requests = db.query(ExpiryRecord).filter(
+            ExpiryRecord.batch_id == batch.id,
+            ExpiryRecord.action == action,
+            ExpiryRecord.action_status.in_(
+                ["requested", "approved"]
             )
+        ).all()
 
-        available_quantity = batch.quantity - reserved_quantity
+        reserved_quantity = sum(
+            record.quantity for record in open_requests
+        )
+
+        # Prevent overlapping disposal and return requests
+        # against the same physical batch.
+        all_open_requests = db.query(ExpiryRecord).filter(
+            ExpiryRecord.batch_id == batch.id,
+            ExpiryRecord.action_status.in_(
+                ["requested", "approved"]
+            )
+        ).all()
+
+        total_reserved = sum(
+            record.quantity for record in all_open_requests
+        )
+
+        available_quantity = batch.quantity - total_reserved
 
         if quantity > available_quantity:
             raise HTTPException(
                 400,
-                "Quantity exceeds available stock after existing return reservations"
+                "Quantity exceeds available stock after existing expiry action reservations"
             )
 
         if quantity > product.quantity:
@@ -883,9 +920,8 @@ def create_expiry_record(
                 "Quantity exceeds main inventory stock"
             )
 
-        previous_stock = product.quantity
-
-        # Create expiry record
+        # Create request only.
+        # No stock deduction happens at this stage.
         record = ExpiryRecord(
             batch_id=batch.id,
             supplier_id=(
@@ -910,41 +946,17 @@ def create_expiry_record(
                 "pending"
                 if action == "supplier_return"
                 else "not_applicable"
-            )
+            ),
+            approval_status="pending",
+            action_status="requested"
         )
 
         db.add(record)
-
-        # Disposal: deduct stock immediately
-        if action == "disposal":
-
-            batch.quantity -= quantity
-            product.quantity -= quantity
-
-            movement = StockMovement(
-                product_id=product.id,
-                movement_type="disposal",
-                quantity_change=-quantity,
-                quantity_before=previous_stock,
-                quantity_after=product.quantity,
-                reason=f"Disposal: {reason or 'Expired batch'}",
-                performed_by=performed_by,
-                reference_type=reference_type,
-                reference_id=reference_id
-            )
-
-            db.add(movement)
-
-        # Supplier return: reserve stock only
         db.commit()
         db.refresh(record)
 
-        response = {
-            "message": (
-                "Supplier return request created successfully"
-                if action == "supplier_return"
-                else "Expired stock disposed successfully"
-            ),
+        return {
+            "message": "Expiry action request created. Waiting for owner approval.",
             "record_id": record.id,
             "product_id": product.id,
             "product_name": product.name,
@@ -952,35 +964,17 @@ def create_expiry_record(
             "batch_number": batch.batch_number,
             "action": action,
             "quantity": quantity,
+            "approval_status": record.approval_status,
+            "action_status": record.action_status,
             "return_status": record.return_status,
             "supplier_id": record.supplier_id,
             "supplier_name": record.supplier_name,
-            "supplier_reference": record.supplier_reference,
-            "previous_stock": previous_stock,
+            "previous_stock": product.quantity,
             "current_stock": product.quantity,
-            "remaining_batch_quantity": batch.quantity
+            "remaining_batch_quantity": batch.quantity,
+            "reserved_quantity": total_reserved + quantity,
+            "inventory_deducted": False
         }
-
-        if action == "supplier_return":
-
-            response["message"] = (
-                "Return request is pending supplier confirmation. "
-                "Inventory has not been deducted."
-            )
-
-            response["reserved_quantity"] = (
-                reserved_quantity + quantity
-            )
-
-        else:
-            db.refresh(movement)
-
-            response["movement_id"] = movement.id
-            response["performed_by"] = movement.performed_by
-            response["reference_type"] = movement.reference_type
-            response["reference_id"] = movement.reference_id
-
-        return response
 
     except HTTPException:
         db.rollback()
@@ -997,12 +991,13 @@ def create_expiry_record(
 
 
 # ==========================================
-# SUPPLIER RETURN RESPONSE API
+# SUPPLIER RESPONSE API
 # Purpose:
-# 1. Process supplier acceptance or rejection
-# 2. Retrieve linked supplier information
-# 3. Update supplier reference details
-# 4. Preserve inventory until pickup confirmation
+# Allow a supplier to accept or reject an
+# owner-approved supplier return request.
+#
+# Owner approval is mandatory before the
+# supplier can respond.
 #
 # Method: PUT
 # Endpoint: /expiry-records/{record_id}/supplier-response
@@ -1018,51 +1013,46 @@ def supplier_return_response(
         status = response_data.get("status")
         supplier_reference = response_data.get("supplier_reference")
 
-        # Validate response status
+        # Validate record ID
+        if (
+            not isinstance(record_id, int)
+            or isinstance(record_id, bool)
+            or record_id <= 0
+        ):
+            raise HTTPException(400, "Invalid record ID")
+
+        # Validate supplier response status
         if status not in ["accepted", "rejected"]:
             raise HTTPException(
-                status_code=400,
-                detail="Status must be accepted or rejected"
+                400,
+                "Status must be accepted or rejected"
             )
 
         # Validate supplier reference
         if supplier_reference is not None and (
             not isinstance(supplier_reference, str)
-            or len(supplier_reference.strip()) == 0
             or len(supplier_reference) > 100
         ):
             raise HTTPException(
-                status_code=400,
-                detail="Invalid supplier reference"
+                400,
+                "Invalid supplier reference"
             )
 
-        # Find return record
+        # Find initial record reference
         record_reference = db.query(ExpiryRecord).filter(
             ExpiryRecord.id == record_id
         ).first()
 
         if not record_reference:
-            raise HTTPException(
-                status_code=404,
-                detail="Expiry record not found"
-            )
+            raise HTTPException(404, "Expiry record not found")
 
-        if record_reference.action != "supplier_return":
-            raise HTTPException(
-                status_code=400,
-                detail="This record is not a supplier return"
-            )
-
-        # Find associated batch
+        # Find batch reference
         batch_reference = db.query(ProductBatch).filter(
             ProductBatch.id == record_reference.batch_id
         ).first()
 
         if not batch_reference:
-            raise HTTPException(
-                status_code=404,
-                detail="Batch not found"
-            )
+            raise HTTPException(404, "Batch not found")
 
         # Lock product first
         product = db.query(Product).filter(
@@ -1070,34 +1060,54 @@ def supplier_return_response(
         ).with_for_update().first()
 
         if not product:
-            raise HTTPException(
-                status_code=404,
-                detail="Product not found"
-            )
+            raise HTTPException(404, "Product not found")
 
-        # Lock batch
+        # Lock batch second
         batch = db.query(ProductBatch).filter(
-            ProductBatch.id == batch_reference.id
+            ProductBatch.id == record_reference.batch_id,
+            ProductBatch.product_id == product.id
         ).with_for_update().first()
 
         if not batch:
-            raise HTTPException(
-                status_code=404,
-                detail="Batch not found"
-            )
+            raise HTTPException(404, "Batch not found")
 
-        # Lock return record
+        # Lock expiry record last
         record = db.query(ExpiryRecord).filter(
             ExpiryRecord.id == record_id
         ).with_for_update().first()
 
-        if record.return_status != "pending":
+        if not record:
+            raise HTTPException(404, "Expiry record not found")
+
+        # Only supplier return requests are allowed
+        if record.action != "supplier_return":
             raise HTTPException(
-                status_code=409,
-                detail=f"Return request is already {record.return_status}"
+                400,
+                "This record is not a supplier return request"
             )
 
-        # Retrieve linked supplier
+        # Owner approval is mandatory
+        if record.approval_status != "approved":
+            raise HTTPException(
+                403,
+                "Owner approval is required before supplier response"
+            )
+
+        # Request must still be active
+        if record.action_status != "requested":
+            raise HTTPException(
+                400,
+                "This supplier return request is not active"
+            )
+
+        # Only pending supplier responses can be updated
+        if record.return_status != "pending":
+            raise HTTPException(
+                400,
+                "Only pending supplier requests can be updated"
+            )
+
+        # Find registered supplier
         supplier = None
 
         if record.supplier_id is not None:
@@ -1105,36 +1115,52 @@ def supplier_return_response(
                 Supplier.id == record.supplier_id
             ).first()
 
-            if not supplier:
-                raise HTTPException(
-                    status_code=404,
-                    detail="Linked supplier not found"
-                )
+        if not supplier:
+            raise HTTPException(
+                404,
+                "Linked supplier not found"
+            )
 
-        # Update return status
+        # Update supplier response
         record.return_status = status
 
         if supplier_reference is not None:
             record.supplier_reference = supplier_reference.strip()
 
+        # Preserve existing supplier acceptance timestamp behavior
         if status == "accepted":
             record.approved_at = datetime.now(timezone.utc)
 
+        # Rejected requests no longer reserve stock
+        if status == "rejected":
+            record.action_status = "cancelled"
+
         db.commit()
+
         db.refresh(record)
+        db.refresh(product)
+        db.refresh(batch)
 
         return {
-            "message": f"Supplier return {status} successfully",
-            "record_id": record.id,
-            "supplier_id": record.supplier_id,
-            "supplier_name": (
-                supplier.name if supplier else record.supplier_name
+            "message": (
+                "Supplier return accepted successfully"
+                if status == "accepted"
+                else "Supplier return rejected successfully"
             ),
-            "return_status": record.return_status,
+            "record_id": record.id,
+            "product_id": product.id,
+            "product_name": product.name,
+            "batch_id": batch.id,
+            "batch_number": batch.batch_number,
+            "supplier_id": supplier.id,
+            "supplier_name": supplier.name,
+            "approval_status": record.approval_status,
+            "supplier_response": record.return_status,
+            "action_status": record.action_status,
             "supplier_reference": record.supplier_reference,
-            "inventory_deducted": False,
-            "remaining_batch_quantity": batch.quantity,
-            "remaining_product_stock": product.quantity
+            "owner_approved_at": record.owner_approved_at,
+            "supplier_accepted_at": record.approved_at,
+            "inventory_deducted": False
         }
 
     except HTTPException:
@@ -1147,16 +1173,18 @@ def supplier_return_response(
 
         raise HTTPException(
             status_code=500,
-            detail="Unable to update supplier response"
+            detail="Unable to process supplier response"
         )
+
 
 # ==========================================
 # SUPPLIER PICKUP CONFIRMATION API
 # Purpose:
-# 1. Confirm physical pickup of returned goods
-# 2. Retrieve linked supplier information
-# 3. Deduct inventory exactly once
-# 4. Record stock movement for audit history
+# 1. Confirm physical pickup of returned goods.
+# 2. Require owner approval and supplier acceptance.
+# 3. Deduct inventory exactly once.
+# 4. Record stock movement for audit history.
+# 5. Mark the expiry action as completed.
 #
 # Method: PUT
 # Endpoint: /expiry-records/{record_id}/pickup
@@ -1171,6 +1199,14 @@ def confirm_supplier_pickup(
     try:
         performed_by = pickup_data.get("performed_by")
         reference_id = pickup_data.get("reference_id")
+
+        # Validate record ID
+        if (
+            not isinstance(record_id, int)
+            or isinstance(record_id, bool)
+            or record_id <= 0
+        ):
+            raise HTTPException(400, "Invalid record ID")
 
         # Validate audit information
         if performed_by is not None and (
@@ -1187,7 +1223,7 @@ def confirm_supplier_pickup(
         ):
             raise HTTPException(400, "Invalid reference_id")
 
-        # Find return record
+        # Find return record reference
         record_reference = db.query(ExpiryRecord).filter(
             ExpiryRecord.id == record_id
         ).first()
@@ -1196,9 +1232,12 @@ def confirm_supplier_pickup(
             raise HTTPException(404, "Expiry record not found")
 
         if record_reference.action != "supplier_return":
-            raise HTTPException(400, "Not a supplier return record")
+            raise HTTPException(
+                400,
+                "Not a supplier return record"
+            )
 
-        # Find batch
+        # Find batch reference
         batch_reference = db.query(ProductBatch).filter(
             ProductBatch.id == record_reference.batch_id
         ).first()
@@ -1214,24 +1253,48 @@ def confirm_supplier_pickup(
         if not product:
             raise HTTPException(404, "Product not found")
 
-        # Lock batch
+        # Lock batch second
         batch = db.query(ProductBatch).filter(
-            ProductBatch.id == batch_reference.id
+            ProductBatch.id == record_reference.batch_id,
+            ProductBatch.product_id == product.id
         ).with_for_update().first()
 
         if not batch:
             raise HTTPException(404, "Batch not found")
 
-        # Lock return record
+        # Lock expiry record last
         record = db.query(ExpiryRecord).filter(
             ExpiryRecord.id == record_id
         ).with_for_update().first()
 
-        # Check return status
+        if not record:
+            raise HTTPException(404, "Expiry record not found")
+
+        # Owner approval is mandatory
+        if record.approval_status != "approved":
+            raise HTTPException(
+                403,
+                "Owner approval is required before supplier pickup"
+            )
+
+        # Supplier must have accepted the return
         if record.return_status != "accepted":
             raise HTTPException(
                 409,
-                "Only accepted return requests can be picked up"
+                "Only accepted supplier return requests can be picked up"
+            )
+
+        # Prevent duplicate pickup
+        if record.action_status == "completed":
+            raise HTTPException(
+                409,
+                "Supplier pickup has already been completed"
+            )
+
+        if record.action_status != "requested":
+            raise HTTPException(
+                400,
+                "This supplier return request cannot be processed"
             )
 
         # Retrieve linked supplier
@@ -1242,45 +1305,57 @@ def confirm_supplier_pickup(
                 Supplier.id == record.supplier_id
             ).first()
 
-            if not supplier:
-                raise HTTPException(
-                    404,
-                    "Linked supplier not found"
-                )
+        if not supplier:
+            raise HTTPException(
+                404,
+                "Linked supplier not found"
+            )
 
         # Validate available stock
-        if record.quantity > batch.quantity:
+        quantity = float(record.quantity)
+
+        if not math.isfinite(quantity) or quantity <= 0:
+            raise HTTPException(
+                400,
+                "Invalid return quantity"
+            )
+
+        if quantity > batch.quantity:
             raise HTTPException(
                 409,
                 "Insufficient batch stock for pickup"
             )
 
-        if record.quantity > product.quantity:
+        if quantity > product.quantity:
             raise HTTPException(
                 409,
                 "Insufficient product stock for pickup"
             )
 
+        # Capture previous stock
         previous_stock = product.quantity
+        previous_batch_quantity = batch.quantity
 
-        # Deduct stock exactly once
-        batch.quantity -= record.quantity
-        product.quantity -= record.quantity
+        # Deduct inventory exactly once
+        batch.quantity -= quantity
+        product.quantity -= quantity
 
+        # Update supplier return status
         record.return_status = "picked_up"
         record.picked_up_at = datetime.now(timezone.utc)
 
-        # Record stock movement
+        # Mark action as completed
+        record.action_status = "completed"
+        record.action_completed_at = datetime.now(timezone.utc)
+
+        # Create stock movement for audit history
         movement = StockMovement(
             product_id=product.id,
             movement_type="supplier_return",
-            quantity_change=-record.quantity,
+            quantity_change=-quantity,
             quantity_before=previous_stock,
             quantity_after=product.quantity,
-            reason=(
-                f"Supplier pickup: "
-                f"{supplier.name if supplier else record.supplier_name}"
-            ),
+            reason=f"Supplier pickup: {supplier.name}",
             performed_by=performed_by,
             reference_type="expiry_record",
             reference_id=record.id
@@ -1289,22 +1364,32 @@ def confirm_supplier_pickup(
         db.add(movement)
 
         db.commit()
+
         db.refresh(record)
+        db.refresh(product)
+        db.refresh(batch)
         db.refresh(movement)
 
         return {
             "message": "Supplier pickup confirmed successfully",
             "record_id": record.id,
-            "supplier_id": record.supplier_id,
-            "supplier_name": (
-                supplier.name if supplier else record.supplier_name
-            ),
+            "product_id": product.id,
+            "product_name": product.name,
+            "batch_id": batch.id,
+            "batch_number": batch.batch_number,
+            "supplier_id": supplier.id,
+            "supplier_name": supplier.name,
+            "approval_status": record.approval_status,
             "return_status": record.return_status,
-            "quantity_returned": record.quantity,
-            "movement_id": movement.id,
-            "remaining_batch_quantity": batch.quantity,
+            "action_status": record.action_status,
+            "quantity_returned": quantity,
+            "previous_product_stock": previous_stock,
             "remaining_product_stock": product.quantity,
-            "picked_up_at": record.picked_up_at
+            "previous_batch_quantity": previous_batch_quantity,
+            "remaining_batch_quantity": batch.quantity,
+            "movement_id": movement.id,
+            "picked_up_at": record.picked_up_at,
+            "action_completed_at": record.action_completed_at
         }
 
     except HTTPException:
@@ -1321,16 +1406,18 @@ def confirm_supplier_pickup(
         )
 
 
-#Create the Supplier Credit API
-
-# ---------------------------------------------------------
-# API: Confirm Supplier Credit
+# ==========================================
+# SUPPLIER CREDIT CONFIRMATION API
+# Purpose:
+# 1. Record supplier credit after pickup.
+# 2. Require owner approval.
+# 3. Verify physical pickup is completed.
+# 4. Prevent duplicate credit recording.
+# 5. Maintain supplier credit audit details.
+#
 # Method: PUT
 # Endpoint: /expiry-records/{record_id}/credit
-# Purpose:
-# Records the credit amount received from a supplier after
-# the returned goods have been picked up.
-# ---------------------------------------------------------
+# ==========================================
 
 @app.put("/expiry-records/{record_id}/credit")
 def confirm_supplier_credit(
@@ -1341,36 +1428,30 @@ def confirm_supplier_credit(
     try:
         credit_amount = credit_data.get("credit_amount")
 
+        # Validate record ID
+        if (
+            not isinstance(record_id, int)
+            or isinstance(record_id, bool)
+            or record_id <= 0
+        ):
+            raise HTTPException(400, "Invalid record ID")
+
         # Validate credit amount
         try:
             credit_amount = float(credit_amount)
         except (ValueError, TypeError):
             raise HTTPException(
-                status_code=400,
-                detail="Invalid credit amount"
+                400,
+                "Invalid credit amount"
             )
 
-        if not math.isfinite(credit_amount) or credit_amount <= 0:
+        if (
+            not math.isfinite(credit_amount)
+            or credit_amount <= 0
+        ):
             raise HTTPException(
-                status_code=400,
-                detail="Credit amount must be greater than zero"
-            )
-
-        # Find return record
-        record_reference = db.query(ExpiryRecord).filter(
-            ExpiryRecord.id == record_id
-        ).first()
-
-        if not record_reference:
-            raise HTTPException(
-                status_code=404,
-                detail="Return record not found"
-            )
-
-        if record_reference.action != "supplier_return":
-            raise HTTPException(
-                status_code=400,
-                detail="This is not a supplier return"
+                400,
+                "Credit amount must be greater than zero"
             )
 
         # Lock the return record
@@ -1378,18 +1459,49 @@ def confirm_supplier_credit(
             ExpiryRecord.id == record_id
         ).with_for_update().first()
 
-        # Credit is allowed only after pickup
+        if not record:
+            raise HTTPException(
+                404,
+                "Return record not found"
+            )
+
+        # Validate action type
+        if record.action != "supplier_return":
+            raise HTTPException(
+                400,
+                "This is not a supplier return"
+            )
+
+        # Owner approval is mandatory
+        if record.approval_status != "approved":
+            raise HTTPException(
+                403,
+                "Owner approval is required before recording supplier credit"
+            )
+
+        # Physical pickup must be completed
         if record.return_status != "picked_up":
             raise HTTPException(
-                status_code=409,
-                detail="Supplier pickup must be confirmed before recording credit"
+                409,
+                "Supplier pickup must be confirmed before recording credit"
+            )
+
+        # Action must be completed
+        if record.action_status != "completed":
+            raise HTTPException(
+                409,
+                "Supplier pickup action must be completed before recording credit"
             )
 
         # Prevent duplicate credit recording
-        if record.credit_amount is not None or record.credited_at is not None:
+        if (
+            record.credit_amount is not None
+            or record.credited_at is not None
+            or record.return_status == "credited"
+        ):
             raise HTTPException(
-                status_code=409,
-                detail="Supplier credit has already been recorded"
+                409,
+                "Supplier credit has already been recorded"
             )
 
         # Fetch registered supplier details
@@ -1400,7 +1512,13 @@ def confirm_supplier_credit(
                 Supplier.id == record.supplier_id
             ).first()
 
-        # Record supplier credit
+        if not supplier:
+            raise HTTPException(
+                404,
+                "Linked supplier not found"
+            )
+
+        # Record supplier-reported credit
         record.credit_amount = credit_amount
         record.credited_at = datetime.now(timezone.utc)
         record.return_status = "credited"
@@ -1412,13 +1530,14 @@ def confirm_supplier_credit(
             "message": "Supplier credit recorded successfully",
             "record_id": record.id,
             "supplier_id": record.supplier_id,
-            "supplier_name": (
-                supplier.name if supplier else record.supplier_name
-            ),
+            "supplier_name": supplier.name,
+            "approval_status": record.approval_status,
+            "action_status": record.action_status,
             "quantity_returned": record.quantity,
             "credit_amount": record.credit_amount,
             "return_status": record.return_status,
-            "credited_at": record.credited_at
+            "credited_at": record.credited_at,
+            "credit_verified": False
         }
 
     except HTTPException:
@@ -1428,215 +1547,97 @@ def confirm_supplier_credit(
     except Exception as error:
         db.rollback()
         print("Supplier credit error:", str(error))
+
         raise HTTPException(
             status_code=500,
             detail="Unable to record supplier credit"
         )
 
+# ============================================================
+# OWNER APPROVAL API
+# Purpose: Allow the shop owner to approve or reject
+#          expiry disposal and supplier return requests.
+# Method: PUT
+# Endpoint: /expiry-records/{record_id}/approval
+# ============================================================
 
-
-    # ==========================================
-# FEFO SALES MANAGEMENT
-# First Expired, First Out
-# ==========================================
-
-
-
-# ==========================================
-# FEFO SALES MANAGEMENT
-# ==========================================
-
-
-import math
-# ==========================================
-# FEFO SALES MANAGEMENT
-# ==========================================
-
-@app.post("/sales")
-def create_sale(
-    sale_data: dict = Body(...),
+@app.put("/expiry-records/{record_id}/approval")
+def approve_expiry_action(
+    record_id: int,
+    approval_data: dict = Body(...),
     db: Session = Depends(get_db)
 ):
     try:
-        product_id = sale_data.get("product_id")
+        # Read approval information
+        status = approval_data.get("status")
+        approved_by = approval_data.get("approved_by")
 
-        # Validate product ID
+        # Validate approval status
+        if status not in ["approved", "rejected"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Status must be approved or rejected"
+            )
+
+        # Validate owner ID
         if (
-            not isinstance(product_id, int)
-            or isinstance(product_id, bool)
-            or product_id <= 0
+            not isinstance(approved_by, int)
+            or isinstance(approved_by, bool)
+            or approved_by <= 0
         ):
             raise HTTPException(
                 status_code=400,
-                detail="Invalid product ID"
+                detail="A valid approved_by value is required"
             )
 
-        # Validate sale quantity
-        try:
-            sale_quantity = float(sale_data.get("quantity", 0))
-        except (ValueError, TypeError):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid sale quantity"
-            )
+        # Lock the expiry record
+        record = (
+            db.query(ExpiryRecord)
+            .filter(ExpiryRecord.id == record_id)
+            .with_for_update()
+            .first()
+        )
 
-        if not math.isfinite(sale_quantity) or sale_quantity <= 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Sale quantity must be a valid positive number"
-            )
-
-        # Audit fields
-        performed_by = sale_data.get("performed_by")
-        reference_type = sale_data.get("reference_type", "sale")
-        reference_id = sale_data.get("reference_id")
-
-        if performed_by is not None and (
-            not isinstance(performed_by, int)
-            or isinstance(performed_by, bool)
-            or performed_by <= 0
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid performed_by user ID"
-            )
-
-        if reference_type is not None and (
-            not isinstance(reference_type, str)
-            or not reference_type.strip()
-            or len(reference_type) > 50
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid reference_type"
-            )
-
-        if reference_id is not None and (
-            not isinstance(reference_id, int)
-            or isinstance(reference_id, bool)
-            or reference_id <= 0
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid reference_id"
-            )
-
-        # Lock product first
-        product = db.query(Product).filter(
-            Product.id == product_id,
-            Product.is_active == True
-        ).with_for_update().first()
-
-        if not product:
+        if not record:
             raise HTTPException(
                 status_code=404,
-                detail="Product not found"
+                detail="Expiry record not found"
             )
 
-        # Lock all positive-stock batches in FEFO order
-        all_batches = db.query(ProductBatch).filter(
-            ProductBatch.product_id == product_id,
-            ProductBatch.quantity > 0
-        ).order_by(
-            ProductBatch.expiry_date.asc(),
-            ProductBatch.id.asc()
-        ).with_for_update().all()
-
-        total_batch_stock = sum(
-            batch.quantity for batch in all_batches
-        )
-
-        # Check batch consistency
-        if abs(total_batch_stock - product.quantity) > 0.000001:
-            raise HTTPException(
-                status_code=409,
-                detail="Batch stock does not match main inventory. Reconcile inventory before processing this sale."
-            )
-
-        # Only verified and unexpired batches are saleable
-        today = date.today()
-
-        eligible_batches = [
-            batch for batch in all_batches
-            if batch.is_verified and batch.expiry_date >= today
-        ]
-
-        available_stock = sum(
-            batch.quantity for batch in eligible_batches
-        )
-
-        if sale_quantity > available_stock:
+        # Check supported action
+        if record.action not in ["disposal", "supplier_return"]:
             raise HTTPException(
                 status_code=400,
-                detail=f"Insufficient verified, unexpired batch stock. Available: {available_stock}"
+                detail="Invalid expiry action"
             )
 
-        quantity_before = product.quantity
-
-        remaining = sale_quantity
-        batch_updates = []
-
-        # FEFO deduction
-        for batch in eligible_batches:
-
-            if remaining <= 0:
-                break
-
-            sold = min(batch.quantity, remaining)
-
-            batch.quantity -= sold
-            remaining -= sold
-
-            batch_updates.append({
-                "batch_id": batch.id,
-                "batch_number": batch.batch_number,
-                "expiry_date": batch.expiry_date,
-                "quantity_sold": sold,
-                "remaining_batch_quantity": batch.quantity
-            })
-
-        if remaining > 0.000001:
+        # Only pending requests can be reviewed
+        if record.approval_status != "pending":
             raise HTTPException(
                 status_code=409,
-                detail="Unable to complete FEFO batch deduction"
+                detail=(
+                    f"Request is already "
+                    f"{record.approval_status}"
+                )
             )
 
-        # Update main inventory
-        product.quantity -= sale_quantity
+        # Update owner approval
+        record.approval_status = status
 
-        # Create movement with audit information
-        movement = StockMovement(
-            product_id=product.id,
-            movement_type="sale",
-            quantity_change=-sale_quantity,
-            quantity_before=quantity_before,
-            quantity_after=product.quantity,
-            reason="FEFO sale from verified batches",
-            performed_by=performed_by,
-            reference_type=reference_type,
-            reference_id=reference_id
-        )
-
-        db.add(movement)
+        if status == "approved":
+            record.approved_by = approved_by
+            record.owner_approved_at = datetime.now(timezone.utc)
 
         db.commit()
-        db.refresh(movement)
+        db.refresh(record)
 
         return {
-            "message": "FEFO sale completed successfully",
-            "product_id": product.id,
-            "product_name": product.name,
-            "quantity_sold": sale_quantity,
-            "quantity_before": quantity_before,
-            "remaining_stock": product.quantity,
-            "available_stock_before_sale": available_stock,
-            "batch_updates": batch_updates,
-            "movement_id": movement.id,
-            "audit": {
-                "performed_by": movement.performed_by,
-                "reference_type": movement.reference_type,
-                "reference_id": movement.reference_id
-            }
+            "message": f"Expiry action {status} successfully",
+            "record_id": record.id,
+            "action": record.action,
+            "approval_status": record.approval_status,
+            "approved_by": record.approved_by,
+            "owner_approved_at": record.owner_approved_at
         }
 
     except HTTPException:
@@ -1645,11 +1646,329 @@ def create_sale(
 
     except Exception:
         db.rollback()
+        traceback.print_exc()
+
         raise HTTPException(
             status_code=500,
-            detail="Unable to process sale"
+            detail="Unable to process owner approval"
         )
 
+
+
+   
+
+import math
+
+# ---------------------------------------------------------
+# API: Multi-Product FEFO Sales Management
+# Method: POST
+# Endpoint: /sales
+# Purpose:
+# Processes a customer bill containing multiple products.
+# Deducts verified, unexpired batches using FEFO.
+# Stores historical selling prices and links each sale item
+# to its corresponding stock movement.
+# All changes are committed as one database transaction.
+# ---------------------------------------------------------
+
+@app.post("/sales", response_model=SaleResponse)
+def create_sale(
+    sale_data: SaleCreate,
+    db: Session = Depends(get_db)
+):
+    try:
+        today = date.today()
+        tolerance = 0.000001
+
+        # Validate duplicate product entries
+        product_ids = [
+            item.product_id for item in sale_data.items
+        ]
+
+        if len(product_ids) != len(set(product_ids)):
+            raise HTTPException(
+                status_code=400,
+                detail="A product can appear only once in a bill."
+            )
+
+        # Lock active products in a consistent order
+        products = db.query(Product).filter(
+            Product.id.in_(product_ids),
+            Product.is_active.is_(True)
+        ).order_by(
+            Product.id.asc()
+        ).with_for_update().all()
+
+        product_map = {
+            product.id: product for product in products
+        }
+
+        if len(product_map) != len(product_ids):
+            raise HTTPException(
+                status_code=404,
+                detail="One or more products were not found or are inactive."
+            )
+
+        # Prepare and validate all sale items before changing stock
+        sale_plans = []
+        items_subtotal = 0.0
+        total_item_discount = 0.0
+
+        for item in sale_data.items:
+
+            quantity = float(item.quantity)
+            item_discount = float(item.discount_amount)
+
+            if not math.isfinite(quantity) or quantity <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid quantity for product {item.product_id}."
+                )
+
+            if not math.isfinite(item_discount) or item_discount < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid discount for product {item.product_id}."
+                )
+
+            product = product_map[item.product_id]
+
+            unit_price = float(product.selling_price)
+
+            if not math.isfinite(unit_price) or unit_price < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid selling price for {product.name}."
+                )
+
+            gross_amount = quantity * unit_price
+
+            if item_discount > gross_amount + tolerance:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Discount exceeds product amount for {product.name}."
+                )
+
+            line_subtotal = gross_amount - item_discount
+
+            # Lock positive-stock batches in FEFO order
+            batches = db.query(ProductBatch).filter(
+                ProductBatch.product_id == product.id,
+                ProductBatch.quantity > 0
+            ).order_by(
+                ProductBatch.expiry_date.asc(),
+                ProductBatch.id.asc()
+            ).with_for_update().all()
+
+            total_batch_stock = sum(
+                float(batch.quantity) for batch in batches
+            )
+
+            # Check main inventory and batch consistency
+            if abs(total_batch_stock - float(product.quantity)) > tolerance:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Batch stock mismatch for {product.name}. "
+                        "Reconcile inventory before processing this bill."
+                    )
+                )
+
+            # Only verified and unexpired stock is saleable
+            eligible_batches = [
+                batch for batch in batches
+                if batch.is_verified and batch.expiry_date >= today
+            ]
+
+            available_stock = sum(
+                float(batch.quantity) for batch in eligible_batches
+            )
+
+            if quantity > available_stock + tolerance:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Insufficient verified, unexpired stock for "
+                        f"{product.name}. Available: {available_stock}"
+                    )
+                )
+
+            sale_plans.append({
+                "product": product,
+                "batches": eligible_batches,
+                "quantity": quantity,
+                "unit_price": unit_price,
+                "item_discount": item_discount,
+                "line_subtotal": line_subtotal
+            })
+
+            items_subtotal += line_subtotal
+            total_item_discount += item_discount
+
+        # Validate bill-level discount
+        bill_discount = float(sale_data.discount_amount)
+
+        if not math.isfinite(bill_discount) or bill_discount < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid bill discount."
+            )
+
+        if bill_discount > items_subtotal + tolerance:
+            raise HTTPException(
+                status_code=400,
+                detail="Bill discount cannot exceed the bill subtotal."
+            )
+
+        final_total = max(0.0, items_subtotal - bill_discount)
+
+        total_discount = total_item_discount + bill_discount
+
+        # Create the main sales transaction
+        sale = Sale(
+            total_amount=final_total,
+            discount_amount=total_discount,
+            payment_method=sale_data.payment_method.value,
+            notes=sale_data.notes
+        )
+
+        db.add(sale)
+        db.flush()
+
+        response_items = []
+
+        # Process every product using FEFO
+        for plan in sale_plans:
+
+            product = plan["product"]
+            quantity = plan["quantity"]
+            remaining = quantity
+
+            quantity_before = float(product.quantity)
+
+            batch_updates = []
+
+            for batch in plan["batches"]:
+
+                if remaining <= tolerance:
+                    break
+
+                batch_available = float(batch.quantity)
+
+                sold = min(batch_available, remaining)
+
+                batch.quantity = max(0.0, batch_available - sold)
+
+                remaining -= sold
+
+                batch_updates.append({
+                    "batch_id": batch.id,
+                    "quantity_sold": sold
+                })
+
+            if remaining > tolerance:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"FEFO deduction failed for {product.name}."
+                )
+
+            # Update main inventory
+            product.quantity = max(
+                0.0,
+                quantity_before - quantity
+            )
+
+            # Create stock movement for this product
+            movement = StockMovement(
+                product_id=product.id,
+                movement_type="sale",
+                quantity_change=-quantity,
+                quantity_before=quantity_before,
+                quantity_after=product.quantity,
+                reason="FEFO sale from verified batches",
+                reference_type="sale",
+                reference_id=sale.id
+            )
+
+            db.add(movement)
+            db.flush()
+
+            # Store historical sale item details
+            sale_item = SaleItem(
+                sale_id=sale.id,
+                product_id=product.id,
+                stock_movement_id=movement.id,
+                product_name=product.name,
+                unit=product.unit,
+                quantity=quantity,
+                unit_price=plan["unit_price"],
+                discount_amount=plan["item_discount"],
+                subtotal=plan["line_subtotal"]
+            )
+
+            db.add(sale_item)
+
+            response_items.append({
+                "id": None,
+                "product_id": product.id,
+                "stock_movement_id": movement.id,
+                "product_name": product.name,
+                "unit": product.unit,
+                "quantity": quantity,
+                "unit_price": plan["unit_price"],
+                "discount_amount": plan["item_discount"],
+                "subtotal": plan["line_subtotal"],
+                "quantity_before": quantity_before,
+                "remaining_stock": product.quantity,
+                "batch_updates": batch_updates
+            })
+
+        # Commit the entire bill atomically
+        db.commit()
+                # ---------------------------------------------
+        # Invalidate sales analytics cache after commit
+        # ---------------------------------------------
+
+        try:
+            from app.services.sales_analytics_cache import (
+                invalidate_sales_analytics_cache
+            )
+
+            invalidate_sales_analytics_cache()
+
+        except Exception as cache_error:
+            print(
+                "Sales cache invalidation error:",
+                str(cache_error)
+            )
+        db.refresh(sale)
+
+        # Build transaction response
+        saved_items = db.query(SaleItem).filter(
+            SaleItem.sale_id == sale.id
+        ).all()
+
+        return {
+            "id": sale.id,
+            "total_amount": sale.total_amount,
+            "discount_amount": sale.discount_amount,
+            "payment_method": sale.payment_method,
+            "notes": sale.notes,
+            "created_at": sale.created_at,
+            "items": saved_items
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to process sales transaction."
+        )
 # ==========================================
 # STOCK RECONCILIATION - SAFE VERSION
 # ==========================================
@@ -4149,4 +4468,2759 @@ def get_financial_summary(
         raise HTTPException(
             status_code=500,
             detail="Failed to generate financial summary"
+        )
+
+
+
+# ============================================================
+# FAST-MOVING PRODUCTS API
+# Purpose: Identify products with the highest sales quantities.
+# Method: GET
+# Endpoint: /inventory/fast-moving
+# Default period: Last 30 days
+# ============================================================
+
+@app.get("/inventory/fast-moving")
+def get_fast_moving_products(
+    days: int = 30,
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate input parameters
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=400,
+                detail="Days must be between 1 and 365"
+            )
+
+        if limit < 1 or limit > 100:
+            raise HTTPException(
+                status_code=400,
+                detail="Limit must be between 1 and 100"
+            )
+
+        # Calculate date range
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+
+        # Calculate total quantity sold per product
+        results = (
+            db.query(
+                Product.id.label("product_id"),
+                Product.name.label("product_name"),
+                Product.unit.label("unit"),
+                func.sum(
+                    -StockMovement.quantity_change
+                ).label("total_quantity_sold"),
+                func.count(
+                    StockMovement.id
+                ).label("number_of_sales")
+            )
+            .join(
+                StockMovement,
+                StockMovement.product_id == Product.id
+            )
+            .filter(
+                StockMovement.movement_type == "sale",
+                StockMovement.created_at >= start_date,
+                StockMovement.created_at <= end_date
+            )
+            .group_by(
+                Product.id,
+                Product.name,
+                Product.unit
+            )
+            .order_by(
+                func.sum(
+                    -StockMovement.quantity_change
+                ).desc()
+            )
+            .limit(limit)
+            .all()
+        )
+
+        fast_moving_products = []
+
+        for rank, row in enumerate(results, start=1):
+            fast_moving_products.append({
+                "rank": rank,
+                "product_id": row.product_id,
+                "product_name": row.product_name,
+                "unit": row.unit,
+                "total_quantity_sold": row.total_quantity_sold,
+                "number_of_sales": row.number_of_sales
+            })
+
+        return {
+            "period_days": days,
+            "total_products": len(fast_moving_products),
+            "fast_moving_products": fast_moving_products
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve fast-moving products"
+        )
+
+
+
+
+# ============================================================
+# SLOW-MOVING PRODUCTS API
+# Purpose: Identify products with low sales activity.
+# Method: GET
+# Endpoint: /inventory/slow-moving
+# Default period: Last 30 days
+# ============================================================
+
+@app.get("/inventory/slow-moving")
+def get_slow_moving_products(
+    days: int = 30,
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate parameters
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=400,
+                detail="Days must be between 1 and 365"
+            )
+
+        if limit < 1 or limit > 100:
+            raise HTTPException(
+                status_code=400,
+                detail="Limit must be between 1 and 100"
+            )
+
+        # Calculate date range
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+
+        # Calculate sales quantity for each product
+        sales_subquery = (
+            db.query(
+                StockMovement.product_id.label("product_id"),
+                func.sum(
+                    -StockMovement.quantity_change
+                ).label("total_quantity_sold"),
+                func.count(
+                    StockMovement.id
+                ).label("number_of_sales")
+            )
+            .filter(
+                StockMovement.movement_type == "sale",
+                StockMovement.created_at >= start_date,
+                StockMovement.created_at <= end_date
+            )
+            .group_by(StockMovement.product_id)
+            .subquery()
+        )
+
+        # Include products with no sales as zero sales
+        results = (
+            db.query(
+                Product.id.label("product_id"),
+                Product.name.label("product_name"),
+                Product.unit.label("unit"),
+                func.coalesce(
+                    sales_subquery.c.total_quantity_sold, 0
+                ).label("total_quantity_sold"),
+                func.coalesce(
+                    sales_subquery.c.number_of_sales, 0
+                ).label("number_of_sales")
+            )
+            .outerjoin(
+                sales_subquery,
+                Product.id == sales_subquery.c.product_id
+            )
+            .filter(Product.is_active == True)
+            .order_by(
+                func.coalesce(
+                    sales_subquery.c.total_quantity_sold, 0
+                ).asc(),
+                Product.name.asc()
+            )
+            .limit(limit)
+            .all()
+        )
+
+        slow_moving_products = []
+
+        for row in results:
+            slow_moving_products.append({
+                "product_id": row.product_id,
+                "product_name": row.product_name,
+                "unit": row.unit,
+                "total_quantity_sold": row.total_quantity_sold,
+                "number_of_sales": row.number_of_sales
+            })
+
+        return {
+            "period_days": days,
+            "total_products": len(slow_moving_products),
+            "slow_moving_products": slow_moving_products
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve slow-moving products"
+        )
+
+
+
+# ============================================================
+# DEAD STOCK DETECTION API
+# Purpose: Identify active products with available stock but
+#          no recorded sales during the selected period.
+# Method: GET
+# Endpoint: /inventory/dead-stock
+# Default period: Last 90 days
+# ============================================================
+
+@app.get("/inventory/dead-stock")
+def get_dead_stock(
+    days: int = 90,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate parameters
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=400,
+                detail="Days must be between 1 and 365"
+            )
+
+        if limit < 1 or limit > 500:
+            raise HTTPException(
+                status_code=400,
+                detail="Limit must be between 1 and 500"
+            )
+
+        # Calculate date range
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+
+        # Calculate sales during the selected period
+        sales_subquery = (
+            db.query(
+                StockMovement.product_id.label("product_id"),
+                func.sum(
+                    -StockMovement.quantity_change
+                ).label("total_quantity_sold"),
+                func.count(
+                    StockMovement.id
+                ).label("number_of_sales")
+            )
+            .filter(
+                StockMovement.movement_type == "sale",
+                StockMovement.created_at >= start_date,
+                StockMovement.created_at <= end_date
+            )
+            .group_by(StockMovement.product_id)
+            .subquery()
+        )
+
+        # Find active products with stock but no sales
+        results = (
+            db.query(
+                Product.id.label("product_id"),
+                Product.name.label("product_name"),
+                Product.quantity.label("current_stock"),
+                Product.unit.label("unit")
+            )
+            .outerjoin(
+                sales_subquery,
+                Product.id == sales_subquery.c.product_id
+            )
+            .filter(
+                Product.is_active == True,
+                Product.quantity > 0,
+                func.coalesce(
+                    sales_subquery.c.total_quantity_sold, 0
+                ) == 0
+            )
+            .order_by(Product.quantity.desc())
+            .limit(limit)
+            .all()
+        )
+
+        dead_stock_products = []
+
+        for row in results:
+            dead_stock_products.append({
+                "product_id": row.product_id,
+                "product_name": row.product_name,
+                "current_stock": row.current_stock,
+                "unit": row.unit,
+                "days_without_sales": days
+            })
+
+        return {
+            "analysis_period_days": days,
+            "total_dead_stock_products": len(dead_stock_products),
+            "dead_stock_products": dead_stock_products
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to detect dead stock"
+        )
+
+
+
+
+# ============================================================
+# SMART RESTOCK RECOMMENDATIONS API
+# Purpose: Identify products requiring restocking based on
+#          minimum stock and estimated stock coverage.
+# Method: GET
+# Endpoint: /inventory/restock-recommendations
+# Analysis period: Last 30 days
+# Warning threshold: 7 days of stock remaining
+# ============================================================
+
+@app.get("/inventory/restock-recommendations")
+def get_restock_recommendations(
+    days: int = 30,
+    warning_days: int = 7,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate parameters
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=400,
+                detail="Days must be between 1 and 365"
+            )
+
+        if warning_days < 1 or warning_days > 90:
+            raise HTTPException(
+                status_code=400,
+                detail="Warning days must be between 1 and 90"
+            )
+
+        # Calculate analysis period
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+
+        # Calculate product-wise sales
+        sales_subquery = (
+            db.query(
+                StockMovement.product_id.label("product_id"),
+                func.sum(
+                    -StockMovement.quantity_change
+                ).label("total_quantity_sold")
+            )
+            .filter(
+                StockMovement.movement_type == "sale",
+                StockMovement.created_at >= start_date,
+                StockMovement.created_at <= end_date
+            )
+            .group_by(StockMovement.product_id)
+            .subquery()
+        )
+
+        # Retrieve active products
+        results = (
+            db.query(
+                Product.id.label("product_id"),
+                Product.name.label("product_name"),
+                Product.quantity.label("current_stock"),
+                Product.minimum_stock.label("minimum_stock"),
+                Product.unit.label("unit"),
+                func.coalesce(
+                    sales_subquery.c.total_quantity_sold, 0
+                ).label("total_quantity_sold")
+            )
+            .outerjoin(
+                sales_subquery,
+                Product.id == sales_subquery.c.product_id
+            )
+            .filter(Product.is_active == True)
+            .all()
+        )
+
+        recommendations = []
+
+        for row in results:
+            current_stock = float(row.current_stock or 0)
+            minimum_stock = float(row.minimum_stock or 0)
+            total_sold = float(row.total_quantity_sold or 0)
+
+            # Calculate average daily sales
+            average_daily_sales = total_sold / days
+
+            # Estimate remaining stock days
+            if average_daily_sales > 0:
+                estimated_days_remaining = (
+                    current_stock / average_daily_sales
+                )
+            else:
+                estimated_days_remaining = None
+
+            # Check minimum stock condition
+            minimum_stock_warning = (
+                current_stock <= minimum_stock
+            )
+
+            # Check 7-day stock coverage condition
+            low_coverage_warning = (
+                estimated_days_remaining is not None
+                and estimated_days_remaining <= warning_days
+            )
+
+            # Recommend only products meeting either condition
+            if not minimum_stock_warning and not low_coverage_warning:
+                continue
+
+            # Calculate target stock for 30 days of demand
+            target_stock = max(
+                minimum_stock * 2,
+                average_daily_sales * 30
+            )
+
+            # Calculate suggested reorder quantity
+            suggested_reorder_quantity = max(
+                0,
+                target_stock - current_stock
+            )
+
+            recommendations.append({
+                "product_id": row.product_id,
+                "product_name": row.product_name,
+                "current_stock": current_stock,
+                "minimum_stock": minimum_stock,
+                "unit": row.unit,
+                "total_quantity_sold": total_sold,
+                "average_daily_sales": round(
+                    average_daily_sales, 2
+                ),
+                "estimated_days_remaining": (
+                    round(estimated_days_remaining, 2)
+                    if estimated_days_remaining is not None
+                    else None
+                ),
+                "minimum_stock_warning": minimum_stock_warning,
+                "low_coverage_warning": low_coverage_warning,
+                "target_stock": round(target_stock, 2),
+                "suggested_reorder_quantity": round(
+                    suggested_reorder_quantity, 2
+                )
+            })
+
+        # Prioritize products with the least stock coverage
+        recommendations.sort(
+            key=lambda item: (
+                item["estimated_days_remaining"]
+                if item["estimated_days_remaining"] is not None
+                else float("inf")
+            )
+        )
+
+        return {
+            "analysis_period_days": days,
+            "warning_threshold_days": warning_days,
+            "total_products_requiring_restock": len(recommendations),
+            "recommendations": recommendations
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate restock recommendations"
+        )
+
+
+
+
+# ============================================================
+# STOCK COVERAGE REPORT API
+# Purpose: Calculate stock coverage using verified,
+#          unexpired batches and recent sales velocity.
+# Method: GET
+# Endpoint: /inventory/stock-coverage
+# ============================================================
+
+@app.get("/inventory/stock-coverage")
+def get_stock_coverage(
+    days: int = 30,
+    warning_days: int = 7,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate parameters
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=400,
+                detail="Days must be between 1 and 365"
+            )
+
+        if warning_days < 1 or warning_days > 90:
+            raise HTTPException(
+                status_code=400,
+                detail="Warning days must be between 1 and 90"
+            )
+
+        # Calculate analysis period
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+
+        # Calculate total sales for each product
+        sales_subquery = (
+            db.query(
+                StockMovement.product_id.label("product_id"),
+                func.sum(
+                    -StockMovement.quantity_change
+                ).label("total_quantity_sold")
+            )
+            .filter(
+                StockMovement.movement_type == "sale",
+                StockMovement.created_at >= start_date,
+                StockMovement.created_at <= end_date
+            )
+            .group_by(StockMovement.product_id)
+            .subquery()
+        )
+
+        # Calculate saleable stock from verified, unexpired batches
+        today = date.today()
+
+        batch_subquery = (
+            db.query(
+                ProductBatch.product_id.label("product_id"),
+                func.coalesce(
+                    func.sum(ProductBatch.quantity), 0
+                ).label("saleable_stock")
+            )
+            .filter(
+                ProductBatch.is_verified == True,
+                ProductBatch.expiry_date >= today,
+                ProductBatch.quantity > 0
+            )
+            .group_by(ProductBatch.product_id)
+            .subquery()
+        )
+
+        # Retrieve active products with recorded and saleable stock
+        results = (
+            db.query(
+                Product.id.label("product_id"),
+                Product.name.label("product_name"),
+                Product.quantity.label("recorded_stock"),
+                Product.minimum_stock.label("minimum_stock"),
+                Product.unit.label("unit"),
+                func.coalesce(
+                    batch_subquery.c.saleable_stock, 0
+                ).label("saleable_stock"),
+                func.coalesce(
+                    sales_subquery.c.total_quantity_sold, 0
+                ).label("total_quantity_sold")
+            )
+            .outerjoin(
+                batch_subquery,
+                Product.id == batch_subquery.c.product_id
+            )
+            .outerjoin(
+                sales_subquery,
+                Product.id == sales_subquery.c.product_id
+            )
+            .filter(Product.is_active == True)
+            .order_by(Product.name.asc())
+            .all()
+        )
+
+        stock_report = []
+
+        for row in results:
+            recorded_stock = float(row.recorded_stock or 0)
+            saleable_stock = float(row.saleable_stock or 0)
+            minimum_stock = float(row.minimum_stock or 0)
+            total_sold = float(row.total_quantity_sold or 0)
+
+            average_daily_sales = total_sold / days
+
+            # Estimate remaining days using saleable stock
+            if average_daily_sales > 0:
+                estimated_days_remaining = (
+                    saleable_stock / average_daily_sales
+                )
+            else:
+                estimated_days_remaining = None
+
+            # Determine stock health using saleable stock
+            if saleable_stock <= 0:
+                stock_status = "out_of_stock"
+
+            elif saleable_stock <= minimum_stock:
+                stock_status = "critical"
+
+            elif (
+                estimated_days_remaining is not None
+                and estimated_days_remaining <= warning_days
+            ):
+                stock_status = "low_stock"
+
+            else:
+                stock_status = "healthy"
+
+            stock_report.append({
+                "product_id": row.product_id,
+                "product_name": row.product_name,
+                "recorded_stock": recorded_stock,
+                "saleable_stock": saleable_stock,
+                "minimum_stock": minimum_stock,
+                "unit": row.unit,
+                "total_quantity_sold": total_sold,
+                "average_daily_sales": round(
+                    average_daily_sales, 2
+                ),
+                "estimated_days_remaining": (
+                    round(estimated_days_remaining, 2)
+                    if estimated_days_remaining is not None
+                    else None
+                ),
+                "stock_status": stock_status
+            })
+
+        return {
+            "analysis_period_days": days,
+            "warning_threshold_days": warning_days,
+            "total_products": len(stock_report),
+            "stock_coverage": stock_report
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate stock coverage report"
+        )
+
+
+
+# ============================================================
+# INVENTORY HEALTH SUMMARY API
+# Purpose: Provide an overall health report of shop inventory.
+# Method: GET
+# Endpoint: /inventory/health-summary
+# ============================================================
+
+@app.get("/inventory/health-summary")
+def get_inventory_health_summary(
+    warning_days: int = 7,
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate parameters
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=400,
+                detail="Days must be between 1 and 365"
+            )
+
+        if warning_days < 1 or warning_days > 90:
+            raise HTTPException(
+                status_code=400,
+                detail="Warning days must be between 1 and 90"
+            )
+
+        # Calculate analysis period
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+        today = date.today()
+
+        # Calculate sales for each product
+        sales_subquery = (
+            db.query(
+                StockMovement.product_id.label("product_id"),
+                func.sum(
+                    -StockMovement.quantity_change
+                ).label("total_quantity_sold")
+            )
+            .filter(
+                StockMovement.movement_type == "sale",
+                StockMovement.created_at >= start_date,
+                StockMovement.created_at <= end_date
+            )
+            .group_by(StockMovement.product_id)
+            .subquery()
+        )
+
+        # Calculate saleable stock
+        saleable_subquery = (
+            db.query(
+                ProductBatch.product_id.label("product_id"),
+                func.sum(ProductBatch.quantity).label("saleable_stock")
+            )
+            .filter(
+                ProductBatch.is_verified == True,
+                ProductBatch.expiry_date >= today,
+                ProductBatch.quantity > 0
+            )
+            .group_by(ProductBatch.product_id)
+            .subquery()
+        )
+
+        # Calculate unverified stock
+        unverified_subquery = (
+            db.query(
+                ProductBatch.product_id.label("product_id"),
+                func.sum(ProductBatch.quantity).label("unverified_stock")
+            )
+            .filter(
+                ProductBatch.is_verified == False,
+                ProductBatch.quantity > 0
+            )
+            .group_by(ProductBatch.product_id)
+            .subquery()
+        )
+
+        # Calculate expired stock
+        expired_subquery = (
+            db.query(
+                ProductBatch.product_id.label("product_id"),
+                func.sum(ProductBatch.quantity).label("expired_stock")
+            )
+            .filter(
+                ProductBatch.expiry_date < today,
+                ProductBatch.quantity > 0
+            )
+            .group_by(ProductBatch.product_id)
+            .subquery()
+        )
+
+        # Retrieve active products and inventory information
+        results = (
+            db.query(
+                Product.id.label("product_id"),
+                Product.name.label("product_name"),
+                Product.quantity.label("recorded_stock"),
+                Product.minimum_stock.label("minimum_stock"),
+                Product.unit.label("unit"),
+
+                func.coalesce(
+                    saleable_subquery.c.saleable_stock, 0
+                ).label("saleable_stock"),
+
+                func.coalesce(
+                    unverified_subquery.c.unverified_stock, 0
+                ).label("unverified_stock"),
+
+                func.coalesce(
+                    expired_subquery.c.expired_stock, 0
+                ).label("expired_stock"),
+
+                func.coalesce(
+                    sales_subquery.c.total_quantity_sold, 0
+                ).label("total_quantity_sold")
+            )
+            .outerjoin(
+                saleable_subquery,
+                Product.id == saleable_subquery.c.product_id
+            )
+            .outerjoin(
+                unverified_subquery,
+                Product.id == unverified_subquery.c.product_id
+            )
+            .outerjoin(
+                expired_subquery,
+                Product.id == expired_subquery.c.product_id
+            )
+            .outerjoin(
+                sales_subquery,
+                Product.id == sales_subquery.c.product_id
+            )
+            .filter(Product.is_active == True)
+            .all()
+        )
+
+        # Initialize summary counters
+        total_recorded_stock = 0
+        total_saleable_stock = 0
+        total_unverified_stock = 0
+        total_expired_stock = 0
+
+        out_of_stock_products = 0
+        critical_stock_products = 0
+        low_stock_products = 0
+        healthy_products = 0
+
+        products_with_unverified_stock = 0
+        products_with_expired_stock = 0
+
+        product_details = []
+
+        for row in results:
+            recorded_stock = float(row.recorded_stock or 0)
+            saleable_stock = float(row.saleable_stock or 0)
+            unverified_stock = float(row.unverified_stock or 0)
+            expired_stock = float(row.expired_stock or 0)
+            minimum_stock = float(row.minimum_stock or 0)
+            total_sold = float(row.total_quantity_sold or 0)
+
+            average_daily_sales = total_sold / days
+
+            if average_daily_sales > 0:
+                estimated_days_remaining = (
+                    saleable_stock / average_daily_sales
+                )
+            else:
+                estimated_days_remaining = None
+
+            # Determine product stock status
+            if saleable_stock <= 0:
+                stock_status = "out_of_stock"
+                out_of_stock_products += 1
+
+            elif saleable_stock <= minimum_stock:
+                stock_status = "critical"
+                critical_stock_products += 1
+
+            elif (
+                estimated_days_remaining is not None
+                and estimated_days_remaining <= warning_days
+            ):
+                stock_status = "low_stock"
+                low_stock_products += 1
+
+            else:
+                stock_status = "healthy"
+                healthy_products += 1
+
+            # Accumulate stock totals
+            total_recorded_stock += recorded_stock
+            total_saleable_stock += saleable_stock
+            total_unverified_stock += unverified_stock
+            total_expired_stock += expired_stock
+
+            if unverified_stock > 0:
+                products_with_unverified_stock += 1
+
+            if expired_stock > 0:
+                products_with_expired_stock += 1
+
+            product_details.append({
+                "product_id": row.product_id,
+                "product_name": row.product_name,
+                "recorded_stock": recorded_stock,
+                "saleable_stock": saleable_stock,
+                "unverified_stock": unverified_stock,
+                "expired_stock": expired_stock,
+                "minimum_stock": minimum_stock,
+                "unit": row.unit,
+                "total_quantity_sold": total_sold,
+                "estimated_days_remaining": (
+                    round(estimated_days_remaining, 2)
+                    if estimated_days_remaining is not None
+                    else None
+                ),
+                "stock_status": stock_status
+            })
+
+        # Return inventory health summary
+        return {
+            "analysis_period_days": days,
+            "warning_threshold_days": warning_days,
+
+            "total_products": len(results),
+
+            "stock_totals": {
+                "recorded_stock": round(total_recorded_stock, 2),
+                "saleable_stock": round(total_saleable_stock, 2),
+                "unverified_stock": round(total_unverified_stock, 2),
+                "expired_stock": round(total_expired_stock, 2)
+            },
+
+            "product_health": {
+                "out_of_stock": out_of_stock_products,
+                "critical": critical_stock_products,
+                "low_stock": low_stock_products,
+                "healthy": healthy_products
+            },
+
+            "stock_warnings": {
+                "products_with_unverified_stock":
+                    products_with_unverified_stock,
+                "products_with_expired_stock":
+                    products_with_expired_stock
+            },
+
+            "products": product_details
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate inventory health summary"
+        )
+
+
+
+# ============================================================
+# EXPIRY INTELLIGENCE API
+# Purpose: Identify expired and soon-to-expire inventory
+#          batches, with quantities and verification status.
+# Method: GET
+# Endpoint: /inventory/expiry-intelligence
+# Expiry windows: 7, 15, 30 and 60 days
+# ============================================================
+
+@app.get("/inventory/expiry-intelligence")
+def get_expiry_intelligence(
+    db: Session = Depends(get_db)
+):
+    try:
+        # Use the current calendar date
+        today = datetime.now(timezone.utc).date()
+
+        # Fetch batches belonging to active products
+        results = (
+            db.query(ProductBatch, Product)
+            .join(
+                Product,
+                ProductBatch.product_id == Product.id
+            )
+            .filter(
+                Product.is_active == True,
+                ProductBatch.quantity > 0
+            )
+            .order_by(
+                ProductBatch.expiry_date.asc(),
+                Product.name.asc()
+            )
+            .all()
+        )
+
+        # Initialize expiry categories
+        categories = {
+            "expired": [],
+            "expiring_within_7_days": [],
+            "expiring_8_to_15_days": [],
+            "expiring_16_to_30_days": [],
+            "expiring_31_to_60_days": [],
+            "beyond_60_days": []
+        }
+
+        # Analyze every batch
+        for batch, product in results:
+
+            days_remaining = (
+                batch.expiry_date - today
+            ).days
+
+            quantity = float(batch.quantity or 0)
+
+            # Classify expiry window
+            if days_remaining < 0:
+                category = "expired"
+
+            elif days_remaining <= 7:
+                category = "expiring_within_7_days"
+
+            elif days_remaining <= 15:
+                category = "expiring_8_to_15_days"
+
+            elif days_remaining <= 30:
+                category = "expiring_16_to_30_days"
+
+            elif days_remaining <= 60:
+                category = "expiring_31_to_60_days"
+
+            else:
+                category = "beyond_60_days"
+
+            # Build batch information
+            batch_details = {
+                "batch_id": batch.id,
+                "product_id": product.id,
+                "product_name": product.name,
+                "batch_number": batch.batch_number,
+                "quantity": quantity,
+                "unit": product.unit,
+                "expiry_date": batch.expiry_date.isoformat(),
+                "days_remaining": days_remaining,
+                "is_verified": bool(batch.is_verified),
+                "expiry_category": category
+            }
+
+            categories[category].append(batch_details)
+
+        # Build summary for each category
+        summary = {}
+
+        for category, batches in categories.items():
+
+            summary[category] = {
+                "batch_count": len(batches),
+                "product_count": len({
+                    item["product_id"]
+                    for item in batches
+                })
+            }
+
+        # Calculate overall statistics
+        total_batches = sum(
+            len(batches)
+            for batches in categories.values()
+        )
+
+        expired_batches = len(categories["expired"])
+
+        expiring_within_60_days = sum(
+            len(categories[key])
+            for key in [
+                "expiring_within_7_days",
+                "expiring_8_to_15_days",
+                "expiring_16_to_30_days",
+                "expiring_31_to_60_days"
+            ]
+        )
+
+        # Return expiry intelligence report
+        return {
+            "report_date": today.isoformat(),
+            "total_batches": total_batches,
+            "expired_batches": expired_batches,
+            "expiring_within_60_days":
+                expiring_within_60_days,
+            "summary": summary,
+            "batches": categories
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate expiry intelligence report"
+        )
+
+
+
+# ==========================================
+# APPROVED EXPIRY DISPOSAL EXECUTION API
+# Purpose:
+# Execute an owner-approved disposal request.
+# Deduct stock exactly once and create an audit
+# movement record.
+#
+# Method: PUT
+# Endpoint: /expiry-records/{record_id}/execute-disposal
+# ==========================================
+
+@app.put("/expiry-records/{record_id}/execute-disposal")
+def execute_expiry_disposal(
+    record_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate record ID
+        if record_id <= 0:
+            raise HTTPException(400, "Invalid record ID")
+
+        # Find request to identify its product and batch
+        record_reference = db.query(ExpiryRecord).filter(
+            ExpiryRecord.id == record_id
+        ).first()
+
+        if not record_reference:
+            raise HTTPException(404, "Expiry record not found")
+
+        # Find batch reference
+        batch_reference = db.query(ProductBatch).filter(
+            ProductBatch.id == record_reference.batch_id
+        ).first()
+
+        if not batch_reference:
+            raise HTTPException(404, "Batch not found")
+
+        # Lock product first
+        product = db.query(Product).filter(
+            Product.id == batch_reference.product_id
+        ).with_for_update().first()
+
+        if not product:
+            raise HTTPException(404, "Product not found")
+
+        # Lock batch second
+        batch = db.query(ProductBatch).filter(
+            ProductBatch.id == record_reference.batch_id,
+            ProductBatch.product_id == product.id
+        ).with_for_update().first()
+
+        if not batch:
+            raise HTTPException(404, "Batch not found")
+
+        # Lock expiry record last
+        record = db.query(ExpiryRecord).filter(
+            ExpiryRecord.id == record_id
+        ).with_for_update().first()
+
+        if not record:
+            raise HTTPException(404, "Expiry record not found")
+
+        # Only disposal actions are allowed
+        if record.action != "disposal":
+            raise HTTPException(
+                400,
+                "This record is not a disposal request"
+            )
+
+        # Owner approval is mandatory
+        if record.approval_status != "approved":
+            raise HTTPException(
+                403,
+                "Owner approval is required before disposal"
+            )
+
+        # Prevent duplicate execution
+        if record.action_status == "completed":
+            raise HTTPException(
+                409,
+                "This disposal has already been completed"
+            )
+
+        if record.action_status != "requested":
+            raise HTTPException(
+                400,
+                "This disposal request cannot be executed"
+            )
+
+        # Confirm the batch is still expired
+        if batch.expiry_date >= date.today():
+            raise HTTPException(
+                400,
+                "This batch is no longer eligible for expired-stock disposal"
+            )
+
+        # Validate requested quantity
+        quantity = float(record.quantity)
+
+        if not math.isfinite(quantity) or quantity <= 0:
+            raise HTTPException(
+                400,
+                "Invalid disposal quantity"
+            )
+
+        if quantity > batch.quantity:
+            raise HTTPException(
+                400,
+                "Disposal quantity exceeds remaining batch stock"
+            )
+
+        if quantity > product.quantity:
+            raise HTTPException(
+                400,
+                "Disposal quantity exceeds product stock"
+            )
+
+        # Capture stock before deduction
+        previous_stock = product.quantity
+        previous_batch_quantity = batch.quantity
+
+        # Deduct stock
+        batch.quantity -= quantity
+        product.quantity -= quantity
+
+        # Create inventory audit movement
+        movement = StockMovement(
+            product_id=product.id,
+            movement_type="disposal",
+            quantity_change=-quantity,
+            quantity_before=previous_stock,
+            quantity_after=product.quantity,
+            reason=(
+                f"Approved expired stock disposal: "
+                f"{record.reason or 'Expired batch'}"
+            ),
+            performed_by=record.approved_by,
+            reference_type="expiry_record",
+            reference_id=record.id
+        )
+
+        db.add(movement)
+
+        # Mark action as completed
+        record.action_status = "completed"
+        record.action_completed_at = datetime.now(timezone.utc)
+
+        db.commit()
+
+        db.refresh(record)
+        db.refresh(product)
+        db.refresh(batch)
+        db.refresh(movement)
+
+        return {
+            "message": "Approved expired stock disposed successfully",
+            "record_id": record.id,
+            "product_id": product.id,
+            "product_name": product.name,
+            "batch_id": batch.id,
+            "batch_number": batch.batch_number,
+            "action": record.action,
+            "approval_status": record.approval_status,
+            "action_status": record.action_status,
+            "disposed_quantity": quantity,
+            "previous_product_stock": previous_stock,
+            "current_product_stock": product.quantity,
+            "previous_batch_quantity": previous_batch_quantity,
+            "remaining_batch_quantity": batch.quantity,
+            "movement_id": movement.id,
+            "action_completed_at": record.action_completed_at
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception as error:
+        db.rollback()
+        print("Disposal execution error:", str(error))
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to execute expiry disposal"
+        )
+
+
+# ==========================================
+# EXPIRY ACTION DASHBOARD API
+# Purpose:
+# 1. Display all expiry action requests.
+# 2. Summarize pending owner approvals.
+# 3. Track disposal and supplier return stages.
+# 4. Identify completed and rejected actions.
+# 5. Identify inconsistent historical records.
+#
+# Method: GET
+# Endpoint: /expiry-records/dashboard
+# ==========================================
+
+@app.get("/expiry-records/dashboard")
+def get_expiry_action_dashboard(
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate limit
+        if (
+            not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or limit < 1
+            or limit > 500
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Limit must be between 1 and 500"
+            )
+
+        # Fetch expiry records with linked product,
+        # batch and supplier information.
+        records = (
+            db.query(
+                ExpiryRecord,
+                ProductBatch,
+                Product,
+                Supplier
+            )
+            .join(
+                ProductBatch,
+                ExpiryRecord.batch_id == ProductBatch.id
+            )
+            .join(
+                Product,
+                ProductBatch.product_id == Product.id
+            )
+            .outerjoin(
+                Supplier,
+                ExpiryRecord.supplier_id == Supplier.id
+            )
+            .order_by(ExpiryRecord.recorded_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+        # Dashboard sections
+        pending_approvals = []
+        approved_disposals = []
+        supplier_response_pending = []
+        awaiting_pickup = []
+        awaiting_credit = []
+        completed_actions = []
+        rejected_cancelled = []
+
+        # Process each record
+        for record, batch, product, supplier in records:
+
+            # Identify inconsistent historical data
+            data_warnings = []
+
+            if (
+                record.action == "supplier_return"
+                and not record.supplier_id
+            ):
+                data_warnings.append(
+                    "Supplier return has no linked supplier"
+                )
+
+            if (
+                record.return_status == "credited"
+                and record.action_status != "completed"
+            ):
+                data_warnings.append(
+                    "Credit is recorded but action_status is not completed"
+                )
+
+            if (
+                record.return_status in ["accepted", "picked_up", "credited"]
+                and record.approval_status != "approved"
+            ):
+                data_warnings.append(
+                    "Supplier return progressed without approved owner status"
+                )
+
+            if (
+                record.action_status == "completed"
+                and record.action_completed_at is None
+            ):
+                data_warnings.append(
+                    "Completed action is missing completion timestamp"
+                )
+
+            # Build dashboard item
+            item = {
+                "record_id": record.id,
+                "product_id": product.id,
+                "product_name": product.name,
+                "batch_id": batch.id,
+                "batch_number": batch.batch_number,
+                "expiry_date": batch.expiry_date,
+                "quantity": record.quantity,
+                "action": record.action,
+                "reason": record.reason,
+                "approval_status": record.approval_status,
+                "action_status": record.action_status,
+                "return_status": record.return_status,
+                "supplier_id": record.supplier_id,
+                "supplier_name": (
+                    supplier.name
+                    if supplier
+                    else record.supplier_name
+                ),
+                "approved_by": record.approved_by,
+                "owner_approved_at": record.owner_approved_at,
+                "supplier_accepted_at": record.approved_at,
+                "picked_up_at": record.picked_up_at,
+                "credit_amount": record.credit_amount,
+                "credited_at": record.credited_at,
+                "action_completed_at": record.action_completed_at,
+                "recorded_at": record.recorded_at,
+                "data_warnings": data_warnings
+            }
+
+            # ----------------------------------
+            # 1. Rejected or cancelled requests
+            # ----------------------------------
+            if (
+                record.approval_status == "rejected"
+                or record.action_status == "cancelled"
+                or record.return_status == "rejected"
+            ):
+                rejected_cancelled.append(item)
+
+            # ----------------------------------
+            # 2. Supplier credit already recorded
+            # Treat as completed even if older
+            # records have inconsistent statuses.
+            # ----------------------------------
+            elif (
+                record.action == "supplier_return"
+                and record.return_status == "credited"
+            ):
+                completed_actions.append(item)
+
+            # ----------------------------------
+            # 3. Completed disposal requests
+            # ----------------------------------
+            elif (
+                record.action == "disposal"
+                and record.action_status == "completed"
+            ):
+                completed_actions.append(item)
+
+            # ----------------------------------
+            # 4. Requests awaiting owner approval
+            # ----------------------------------
+            elif (
+                record.approval_status == "pending"
+                and record.action_status == "requested"
+            ):
+                pending_approvals.append(item)
+
+            # ----------------------------------
+            # 5. Approved disposal awaiting execution
+            # ----------------------------------
+            elif (
+                record.action == "disposal"
+                and record.approval_status == "approved"
+                and record.action_status == "requested"
+            ):
+                approved_disposals.append(item)
+
+            # ----------------------------------
+            # 6. Supplier return awaiting response
+            # ----------------------------------
+            elif (
+                record.action == "supplier_return"
+                and record.approval_status == "approved"
+                and record.return_status == "pending"
+                and record.action_status == "requested"
+            ):
+                supplier_response_pending.append(item)
+
+            # ----------------------------------
+            # 7. Supplier accepted, pickup pending
+            # ----------------------------------
+            elif (
+                record.action == "supplier_return"
+                and record.approval_status == "approved"
+                and record.return_status == "accepted"
+                and record.action_status == "requested"
+            ):
+                awaiting_pickup.append(item)
+
+            # ----------------------------------
+            # 8. Pickup completed, credit pending
+            # ----------------------------------
+            elif (
+                record.action == "supplier_return"
+                and record.return_status == "picked_up"
+                and record.action_status == "completed"
+            ):
+                awaiting_credit.append(item)
+
+        # Dashboard summary
+        summary = {
+            "total_records": len(records),
+            "pending_approvals": len(pending_approvals),
+            "approved_disposals": len(approved_disposals),
+            "supplier_response_pending": len(supplier_response_pending),
+            "awaiting_pickup": len(awaiting_pickup),
+            "awaiting_credit": len(awaiting_credit),
+            "completed_actions": len(completed_actions),
+            "rejected_cancelled": len(rejected_cancelled)
+        }
+
+        return {
+            "message": "Expiry action dashboard retrieved successfully",
+            "summary": summary,
+            "dashboard": {
+                "pending_approvals": pending_approvals,
+                "approved_disposals": approved_disposals,
+                "supplier_response_pending": supplier_response_pending,
+                "awaiting_pickup": awaiting_pickup,
+                "awaiting_credit": awaiting_credit,
+                "completed_actions": completed_actions,
+                "rejected_cancelled": rejected_cancelled
+            }
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        print("Expiry dashboard error:", str(error))
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to retrieve expiry action dashboard"
+        )
+
+
+
+# ==========================================
+# EXPIRY ACTION FILTERING API
+# Purpose:
+# 1. Filter expiry records by action type.
+# 2. Filter by owner approval status.
+# 3. Filter by supplier and date range.
+# 4. Support pagination.
+# 5. Return expiry action details and total count.
+#
+# Method: GET
+# Endpoint: /expiry-records/filter
+# ==========================================
+
+@app.get("/expiry-records/filter")
+def filter_expiry_records(
+    action: str | None = None,
+    approval_status: str | None = None,
+    supplier_id: int | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate action
+        valid_actions = ["disposal", "supplier_return"]
+
+        if action is not None and action not in valid_actions:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid action type"
+            )
+
+        # Validate approval status
+        valid_approvals = [
+            "pending",
+            "approved",
+            "rejected"
+        ]
+
+        if (
+            approval_status is not None
+            and approval_status not in valid_approvals
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid approval status"
+            )
+
+        # Validate supplier ID
+        if supplier_id is not None and supplier_id <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Supplier ID must be positive"
+            )
+
+        # Validate pagination
+        if limit < 1 or limit > 500:
+            raise HTTPException(
+                status_code=400,
+                detail="Limit must be between 1 and 500"
+            )
+
+        if offset < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Offset cannot be negative"
+            )
+
+        # Validate date range
+        if (
+            start_date is not None
+            and end_date is not None
+            and start_date > end_date
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Start date cannot be after end date"
+            )
+
+        # Build base query
+        query = (
+            db.query(
+                ExpiryRecord,
+                ProductBatch,
+                Product,
+                Supplier
+            )
+            .join(
+                ProductBatch,
+                ExpiryRecord.batch_id == ProductBatch.id
+            )
+            .join(
+                Product,
+                ProductBatch.product_id == Product.id
+            )
+            .outerjoin(
+                Supplier,
+                ExpiryRecord.supplier_id == Supplier.id
+            )
+        )
+
+        # Apply optional filters
+        if action is not None:
+            query = query.filter(
+                ExpiryRecord.action == action
+            )
+
+        if approval_status is not None:
+            query = query.filter(
+                ExpiryRecord.approval_status == approval_status
+            )
+
+        if supplier_id is not None:
+            query = query.filter(
+                ExpiryRecord.supplier_id == supplier_id
+            )
+
+        if start_date is not None:
+            query = query.filter(
+                func.date(ExpiryRecord.recorded_at) >= start_date
+            )
+
+        if end_date is not None:
+            query = query.filter(
+                func.date(ExpiryRecord.recorded_at) <= end_date
+            )
+
+        # Count all matching records
+        total_matching = query.count()
+
+        # Fetch requested page
+        records = (
+            query
+            .order_by(
+                ExpiryRecord.recorded_at.desc(),
+                ExpiryRecord.id.desc()
+            )
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        results = []
+
+        for record, batch, product, supplier in records:
+
+            results.append({
+                "record_id": record.id,
+                "product_id": product.id,
+                "product_name": product.name,
+                "batch_id": batch.id,
+                "batch_number": batch.batch_number,
+                "expiry_date": batch.expiry_date,
+                "quantity": record.quantity,
+                "action": record.action,
+                "reason": record.reason,
+                "approval_status": record.approval_status,
+                "action_status": record.action_status,
+                "return_status": record.return_status,
+                "supplier_id": record.supplier_id,
+                "supplier_name": (
+                    supplier.name
+                    if supplier
+                    else record.supplier_name
+                ),
+                "approved_by": record.approved_by,
+                "owner_approved_at": record.owner_approved_at,
+                "supplier_accepted_at": record.approved_at,
+                "picked_up_at": record.picked_up_at,
+                "credit_amount": record.credit_amount,
+                "credited_at": record.credited_at,
+                "action_completed_at": record.action_completed_at,
+                "recorded_at": record.recorded_at
+            })
+
+        return {
+            "message": "Expiry records filtered successfully",
+            "filters": {
+                "action": action,
+                "approval_status": approval_status,
+                "supplier_id": supplier_id,
+                "start_date": start_date,
+                "end_date": end_date
+            },
+            "pagination": {
+                "total_matching": total_matching,
+                "limit": limit,
+                "offset": offset,
+                "returned": len(results),
+                "has_more": (
+                    offset + len(results) < total_matching
+                )
+            },
+            "records": results
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        print("Expiry filtering error:", str(error))
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to filter expiry records"
+        )
+
+
+
+
+# ==========================================
+# DEAD STOCK DETECTION API
+# Purpose:
+# 1. Identify products with no sales in 30 days.
+# 2. Exclude newly added products.
+# 3. Calculate stock quantity and blocked stock value.
+# 4. Help shop owners identify dead stock.
+#
+# Method: GET
+# Endpoint: /inventory/intelligence/dead-stock
+# ==========================================
+
+@app.get("/inventory/intelligence/dead-stock")
+def get_dead_stock_products(
+    db: Session = Depends(get_db)
+):
+    try:
+        # Analyse the last 30 days
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
+
+        # Calculate total units sold per product
+        # using existing stock movement records.
+        sales_subquery = (
+            db.query(
+                StockMovement.product_id.label("product_id"),
+                func.sum(
+                    -StockMovement.quantity_change
+                ).label("units_sold")
+            )
+            .filter(
+                StockMovement.movement_type == "sale",
+                StockMovement.quantity_change < 0,
+                StockMovement.created_at >= cutoff_date
+            )
+            .group_by(StockMovement.product_id)
+            .subquery()
+        )
+
+        # Find active products that:
+        # 1. Have positive stock.
+        # 2. Are at least 30 days old.
+        # 3. Have zero sales in the last 30 days.
+        products = (
+            db.query(Product)
+            .outerjoin(
+                sales_subquery,
+                Product.id == sales_subquery.c.product_id
+            )
+            .filter(
+                Product.is_active.is_(True),
+                Product.quantity > 0,
+                Product.created_at <= cutoff_date,
+                func.coalesce(
+                    sales_subquery.c.units_sold, 0
+                ) == 0
+            )
+            .order_by(Product.quantity.desc())
+            .all()
+        )
+
+        dead_stock_products = []
+
+        total_dead_stock_units = 0
+        total_dead_stock_value = 0.0
+
+        for product in products:
+
+            quantity = float(product.quantity or 0)
+            purchase_price = float(product.purchase_price or 0)
+
+            stock_value = quantity * purchase_price
+
+            total_dead_stock_units += quantity
+            total_dead_stock_value += stock_value
+
+            dead_stock_products.append({
+                "product_id": product.id,
+                "product_name": product.name,
+                "category": product.category,
+                "current_stock": product.quantity,
+                "unit": product.unit,
+                "purchase_price": purchase_price,
+                "estimated_stock_value": round(stock_value, 2),
+                "analysis_period_days": 30,
+                "sales_in_period": 0,
+                "recommendation": (
+                    "Review stock and consider reducing "
+                    "future purchases or checking supplier "
+                    "return options."
+                )
+            })
+
+        return {
+            "message": "Dead stock analysis completed successfully",
+            "analysis_period_days": 30,
+            "summary": {
+                "dead_stock_products": len(dead_stock_products),
+                "total_dead_stock_units": total_dead_stock_units,
+                "total_dead_stock_value": round(
+                    total_dead_stock_value, 2
+                )
+            },
+            "dead_stock_products": dead_stock_products
+        }
+
+    except Exception as error:
+        print("Dead stock detection error:", str(error))
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to complete dead stock analysis"
+        )
+
+# ==========================================
+# INVENTORY INTELLIGENCE DATA READINESS API
+# Purpose:
+# 1. Check product age and sales history.
+# 2. Count products with at least 30 days of history.
+# 3. Identify products with and without recent sales.
+# 4. Calculate total units sold in the last 30 days.
+# 5. Assess readiness for inventory intelligence.
+#
+# Method: GET
+# Endpoint: /inventory/intelligence/data-readiness
+# ==========================================
+
+@app.get("/inventory/intelligence/data-readiness")
+def get_inventory_data_readiness(
+    db: Session = Depends(get_db)
+):
+    try:
+        # Fixed analysis period: 30 days
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
+
+        # Total active products
+        total_active_products = (
+            db.query(func.count(Product.id))
+            .filter(Product.is_active.is_(True))
+            .scalar() or 0
+        )
+
+        # Products with at least 30 days of history
+        mature_products = (
+            db.query(func.count(Product.id))
+            .filter(
+                Product.is_active.is_(True),
+                Product.created_at <= cutoff_date
+            )
+            .scalar() or 0
+        )
+
+        # Products younger than 30 days
+        new_products = total_active_products - mature_products
+
+        # Sales summary for the last 30 days
+        sales_summary = (
+            db.query(
+                func.count(
+                    func.distinct(StockMovement.product_id)
+                ).label("products_with_sales"),
+                func.coalesce(
+                    func.sum(-StockMovement.quantity_change),
+                    0
+                ).label("total_units_sold"),
+                func.min(
+                    StockMovement.created_at
+                ).label("first_sale_record")
+            )
+            .join(
+                Product,
+                Product.id == StockMovement.product_id
+            )
+            .filter(
+                Product.is_active.is_(True),
+                StockMovement.movement_type == "sale",
+                StockMovement.quantity_change < 0,
+                StockMovement.created_at >= cutoff_date
+            )
+            .first()
+        )
+
+        products_with_sales = int(
+            sales_summary.products_with_sales or 0
+        )
+
+        total_units_sold = float(
+            sales_summary.total_units_sold or 0
+        )
+
+        # Products without recorded sales in the period
+        products_without_sales = max(
+            total_active_products - products_with_sales,
+            0
+        )
+
+        # Mature products with recent sales
+        mature_products_with_sales = (
+            db.query(
+                func.count(func.distinct(Product.id))
+            )
+            .join(
+                StockMovement,
+                StockMovement.product_id == Product.id
+            )
+            .filter(
+                Product.is_active.is_(True),
+                Product.created_at <= cutoff_date,
+                StockMovement.movement_type == "sale",
+                StockMovement.quantity_change < 0,
+                StockMovement.created_at >= cutoff_date
+            )
+            .scalar() or 0
+        )
+
+        mature_products_without_sales = max(
+            mature_products - mature_products_with_sales,
+            0
+        )
+
+        # Determine data readiness
+        if mature_products == 0:
+            readiness_status = "insufficient_history"
+
+            readiness_message = (
+                "No active products have completed "
+                "the 30-day history period."
+            )
+
+        elif total_units_sold == 0:
+            readiness_status = "sales_tracking_needs_validation"
+
+            readiness_message = (
+                "Mature products are available, but no sales "
+                "were recorded in the last 30 days. "
+                "Verify sales recording before relying on "
+                "dead-stock or fast-moving classifications."
+            )
+
+        else:
+            readiness_status = "ready_for_initial_detection"
+
+            readiness_message = (
+                "Product age and recent sales data are available "
+                "for initial inventory intelligence analysis. "
+                "Validate sales coverage before treating "
+                "recommendations as reliable."
+            )
+
+        return {
+            "message": "Inventory data readiness retrieved successfully",
+
+            "analysis_period_days": 30,
+
+            "summary": {
+                "total_active_products": total_active_products,
+                "mature_products": mature_products,
+                "new_products": new_products,
+                "products_with_sales": products_with_sales,
+                "products_without_sales": products_without_sales,
+                "mature_products_with_sales": mature_products_with_sales,
+                "mature_products_without_sales": mature_products_without_sales,
+                "total_units_sold_last_30_days": total_units_sold,
+                "first_sale_record_in_period": (
+                    sales_summary.first_sale_record
+                )
+            },
+
+            "readiness": {
+                "status": readiness_status,
+                "message": readiness_message
+            }
+        }
+
+    except Exception as error:
+        print("Inventory data readiness error:", str(error))
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to retrieve inventory data readiness"
+        )
+
+
+
+# ==========================================
+# FAST-MOVING PRODUCT DETECTION API
+# Purpose:
+# 1. Analyse product sales over the last 30 days.
+# 2. Calculate average daily sales.
+# 3. Calculate current stock coverage in days.
+# 4. Rank products by sales quantity.
+# 5. Identify products needing replenishment.
+# 6. Avoid classifying products with insufficient history.
+#
+# Method: GET
+# Endpoint: /inventory/intelligence/fast-moving
+# ==========================================
+
+@app.get("/inventory/intelligence/fast-moving")
+def get_fast_moving_products(
+    db: Session = Depends(get_db)
+):
+    try:
+        # Fixed analysis period: 30 days
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
+
+        # Count active products with at least 30 days of history
+        mature_products = (
+            db.query(func.count(Product.id))
+            .filter(
+                Product.is_active.is_(True),
+                Product.created_at <= cutoff_date
+            )
+            .scalar() or 0
+        )
+
+        # Aggregate sales quantities for active products
+        sales_subquery = (
+            db.query(
+                StockMovement.product_id.label("product_id"),
+                func.sum(
+                    -StockMovement.quantity_change
+                ).label("units_sold")
+            )
+            .join(
+                Product,
+                Product.id == StockMovement.product_id
+            )
+            .filter(
+                Product.is_active.is_(True),
+                StockMovement.movement_type == "sale",
+                StockMovement.quantity_change < 0,
+                StockMovement.created_at >= cutoff_date
+            )
+            .group_by(StockMovement.product_id)
+            .subquery()
+        )
+
+        # Calculate total observed sales, including
+        # products that are not yet mature enough.
+        observed_sales = (
+            db.query(
+                func.coalesce(
+                    func.sum(sales_subquery.c.units_sold),
+                    0
+                )
+            )
+            .scalar() or 0
+        )
+
+        # Analyse only mature products with recorded sales
+        products = (
+            db.query(
+                Product,
+                sales_subquery.c.units_sold
+            )
+            .join(
+                sales_subquery,
+                Product.id == sales_subquery.c.product_id
+            )
+            .filter(
+                Product.is_active.is_(True),
+                Product.created_at <= cutoff_date,
+                sales_subquery.c.units_sold > 0
+            )
+            .order_by(
+                sales_subquery.c.units_sold.desc()
+            )
+            .all()
+        )
+
+        fast_moving_candidates = []
+
+        total_eligible_units_sold = 0
+
+        for product, units_sold in products:
+
+            units_sold = float(units_sold or 0)
+            current_stock = float(product.quantity or 0)
+
+            # Average daily sales over 30 days
+            average_daily_sales = units_sold / 30
+
+            # Calculate stock coverage
+            stock_coverage_days = (
+                current_stock / average_daily_sales
+                if average_daily_sales > 0
+                else None
+            )
+
+            # Replenishment priority
+            if current_stock <= 0:
+                replenishment_priority = "urgent"
+
+            elif stock_coverage_days <= 7:
+                replenishment_priority = "high"
+
+            elif stock_coverage_days <= 14:
+                replenishment_priority = "medium"
+
+            else:
+                replenishment_priority = "normal"
+
+            total_eligible_units_sold += units_sold
+
+            fast_moving_candidates.append({
+                "product_id": product.id,
+                "product_name": product.name,
+                "category": product.category,
+                "current_stock": product.quantity,
+                "unit": product.unit,
+                "units_sold_last_30_days": units_sold,
+                "average_daily_sales": round(
+                    average_daily_sales, 2
+                ),
+                "stock_coverage_days": round(
+                    stock_coverage_days, 2
+                ) if stock_coverage_days is not None else None,
+                "replenishment_priority": replenishment_priority,
+                "purchase_price": float(
+                    product.purchase_price or 0
+                )
+            })
+
+        # Determine analysis readiness
+        if mature_products == 0:
+            readiness_status = "insufficient_history"
+
+            readiness_message = (
+                "No active products have completed "
+                "the 30-day history period. "
+                "Fast-moving classification is not reliable yet."
+            )
+
+        elif not fast_moving_candidates:
+            readiness_status = "no_sales_detected"
+
+            readiness_message = (
+                "Mature products are available, but no sales "
+                "were recorded for them in the last 30 days."
+            )
+
+        else:
+            readiness_status = "analysis_available"
+
+            readiness_message = (
+                "Eligible products have been ranked by sales "
+                "quantity. These are fast-moving candidates "
+                "and should be reviewed before purchase decisions."
+            )
+
+        return {
+            "message": "Fast-moving product analysis completed successfully",
+
+            "analysis_period_days": 30,
+
+            "readiness": {
+                "status": readiness_status,
+                "message": readiness_message
+            },
+
+            "summary": {
+                "mature_products": mature_products,
+                "fast_moving_candidates": len(
+                    fast_moving_candidates
+                ),
+                "total_eligible_units_sold": total_eligible_units_sold,
+                "total_observed_units_sold": float(observed_sales)
+            },
+
+            "fast_moving_products": fast_moving_candidates
+        }
+
+    except Exception as error:
+        print("Fast-moving detection error:", str(error))
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to complete fast-moving product analysis"
+        )
+
+
+
+
+
+
+# ---------------------------------------------------------
+# API: Sales Analytics Summary
+# Method: GET
+# Endpoint: /analytics/sales/summary
+# Purpose:
+# 1. Calculate total sales revenue for a selected period.
+# 2. Count completed sales bills.
+# 3. Calculate total quantity of products sold.
+# 4. Calculate average bill value.
+# 5. Provide a summary for the analytics dashboard.
+# ---------------------------------------------------------
+
+@app.get("/analytics/sales/summary")
+def get_sales_analytics_summary(
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate analysis period
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=400,
+                detail="Days must be between 1 and 365"
+            )
+
+        # Calculate date range
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+
+        # Calculate revenue and number of bills
+        sales_summary = db.query(
+            func.count(Sale.id).label("total_bills"),
+            func.coalesce(
+                func.sum(Sale.total_amount), 0
+            ).label("total_revenue")
+        ).filter(
+            Sale.created_at >= start_date,
+            Sale.created_at <= end_date
+        ).first()
+
+        # Calculate total quantity of products sold
+        total_items_sold = db.query(
+            func.coalesce(
+                func.sum(SaleItem.quantity), 0
+            )
+        ).join(
+            Sale,
+            Sale.id == SaleItem.sale_id
+        ).filter(
+            Sale.created_at >= start_date,
+            Sale.created_at <= end_date
+        ).scalar()
+
+        # Convert database results
+        total_bills = int(sales_summary.total_bills or 0)
+        total_revenue = float(sales_summary.total_revenue or 0)
+        total_items_sold = float(total_items_sold or 0)
+
+        # Calculate average bill value
+        average_bill_value = (
+            total_revenue / total_bills
+            if total_bills > 0
+            else 0
+        )
+
+        return {
+            "message": "Sales analytics summary retrieved successfully",
+            "analysis_period_days": days,
+            "summary": {
+                "total_revenue": round(total_revenue, 2),
+                "total_bills": total_bills,
+                "total_items_sold": round(total_items_sold, 2),
+                "average_bill_value": round(
+                    average_bill_value, 2
+                )
+            },
+            "period": {
+                "start_date": start_date,
+                "end_date": end_date
+            }
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        db.rollback()
+        print("Sales analytics error:", str(error))
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to retrieve sales analytics summary"
+        )
+
+# ---------------------------------------------------------
+# API: Daily Sales Analytics
+# Method: GET
+# Endpoint: /analytics/sales/daily
+# Purpose:
+# 1. Calculate daily sales revenue.
+# 2. Count bills recorded each day.
+# 3. Calculate total product quantities sold daily.
+# 4. Identify the highest-revenue day.
+# 5. Provide daily data for dashboard charts.
+# ---------------------------------------------------------
+
+@app.get("/analytics/sales/daily")
+def get_daily_sales_analytics(
+    days: int = 7,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate analysis period
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=400,
+                detail="Days must be between 1 and 365"
+            )
+
+        # Calculate date range
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+
+        # Fetch sales within the selected period
+        sales = db.query(Sale).filter(
+            Sale.created_at >= start_date,
+            Sale.created_at <= end_date
+        ).order_by(
+            Sale.created_at.asc()
+        ).all()
+
+        # Prepare daily summary
+        daily_data = {}
+
+        for sale in sales:
+            sale_date = sale.created_at.date().isoformat()
+
+            if sale_date not in daily_data:
+                daily_data[sale_date] = {
+                    "date": sale_date,
+                    "revenue": 0.0,
+                    "total_bills": 0,
+                    "items_sold": 0.0
+                }
+
+            daily_data[sale_date]["revenue"] += float(
+                sale.total_amount or 0
+            )
+
+            daily_data[sale_date]["total_bills"] += 1
+
+            for item in sale.items:
+                daily_data[sale_date]["items_sold"] += float(
+                    item.quantity or 0
+                )
+
+        # Sort daily records
+        daily_sales = sorted(
+            daily_data.values(),
+            key=lambda item: item["date"]
+        )
+
+        # Round monetary and quantity values
+        for day in daily_sales:
+            day["revenue"] = round(day["revenue"], 2)
+            day["items_sold"] = round(day["items_sold"], 2)
+
+        # Find highest-revenue day
+        highest_sales_day = (
+            max(
+                daily_sales,
+                key=lambda item: item["revenue"]
+            )
+            if daily_sales
+            else None
+        )
+
+        return {
+            "message": "Daily sales analytics retrieved successfully",
+            "analysis_period_days": days,
+            "total_days_with_sales": len(daily_sales),
+            "daily_sales": daily_sales,
+            "highest_sales_day": highest_sales_day
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        db.rollback()
+        print("Daily sales analytics error:", str(error))
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to retrieve daily sales analytics"
+        )
+
+# ---------------------------------------------------------
+# API: Product-wise Sales Performance
+# Method: GET
+# Endpoint: /analytics/sales/products
+# Purpose:
+# 1. Identify the best-selling products.
+# 2. Calculate quantity sold for each product.
+# 3. Calculate revenue generated by each product.
+# 4. Count the number of bills containing each product.
+# 5. Rank products based on quantity sold.
+# ---------------------------------------------------------
+
+@app.get("/analytics/sales/products")
+def get_product_sales_analytics(
+    days: int = 30,
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate analysis period
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=400,
+                detail="Days must be between 1 and 365"
+            )
+
+        # Validate product limit
+        if limit < 1 or limit > 100:
+            raise HTTPException(
+                status_code=400,
+                detail="Limit must be between 1 and 100"
+            )
+
+        # Calculate date range
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+
+        # Aggregate sales records product-wise
+        product_sales = db.query(
+            SaleItem.product_id.label("product_id"),
+            SaleItem.product_name.label("product_name"),
+            SaleItem.unit.label("unit"),
+
+            func.sum(
+                SaleItem.quantity
+            ).label("total_quantity_sold"),
+
+            func.sum(
+                SaleItem.subtotal
+            ).label("total_revenue"),
+
+            func.count(
+                func.distinct(SaleItem.sale_id)
+            ).label("total_bills")
+
+        ).join(
+            Sale,
+            Sale.id == SaleItem.sale_id
+        ).filter(
+            Sale.created_at >= start_date,
+            Sale.created_at <= end_date
+        ).group_by(
+            SaleItem.product_id,
+            SaleItem.product_name,
+            SaleItem.unit
+        ).order_by(
+            func.sum(SaleItem.quantity).desc(),
+            func.sum(SaleItem.subtotal).desc()
+        ).limit(limit).all()
+
+        # Prepare product-wise response
+        products = []
+
+        for rank, product in enumerate(product_sales, start=1):
+            products.append({
+                "rank": rank,
+                "product_id": product.product_id,
+                "product_name": product.product_name,
+                "unit": product.unit,
+                "total_quantity_sold": round(
+                    float(product.total_quantity_sold or 0), 2
+                ),
+                "total_revenue": round(
+                    float(product.total_revenue or 0), 2
+                ),
+                "total_bills": int(product.total_bills or 0)
+            })
+
+        # Return product performance
+        return {
+            "message": "Product-wise sales analytics retrieved successfully",
+            "analysis_period_days": days,
+            "total_products_sold": len(products),
+            "products": products
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        db.rollback()
+        print("Product sales analytics error:", str(error))
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to retrieve product-wise sales analytics"
+        )
+
+
+
+
+
+
+# ---------------------------------------------------------
+# API: Sales Analytics AI Chat with Performance Monitoring
+# Method: POST
+# Endpoint: /agents/sales/chat
+# Purpose:
+# 1. Understand the owner's sales question.
+# 2. Retrieve verified sales data.
+# 3. Use cache to avoid repeated database queries.
+# 4. Generate a fast response.
+# 5. Measure execution time of each stage.
+# ---------------------------------------------------------
+
+@app.post("/agents/sales/chat")
+def sales_analytics_chat(
+    question: str = Body(
+        ...,
+        embed=True,
+        min_length=1,
+        max_length=1000
+    ),
+    db: Session = Depends(get_db)
+):
+    import time
+
+    # Start total execution timer
+    total_start = time.perf_counter()
+
+    # Initialize performance measurements
+    intent_time = 0.0
+    database_time = 0.0
+    formatting_time = 0.0
+    cache_lookup_time = 0.0
+    cache_hit = False
+
+    try:
+        # Import sales analytics agent
+        from app.agents.sales_analytics_agent import (
+            understand_sales_question,
+            format_sales_answer
+        )
+
+        # Import analytics cache service
+        from app.services.sales_analytics_cache import (
+            get_cached_analytics,
+            set_cached_analytics
+        )
+
+        # ---------------------------------------------
+        # STAGE 1: Intent Detection
+        # ---------------------------------------------
+
+        intent_start = time.perf_counter()
+
+        intent_result = understand_sales_question(question)
+
+        intent_time = (
+            time.perf_counter() - intent_start
+        ) * 1000
+
+        intent = intent_result.intent
+        days = intent_result.days
+        limit = intent_result.limit
+
+        # ---------------------------------------------
+        # Handle unsupported questions
+        # ---------------------------------------------
+
+        if intent == "unknown":
+
+            total_time = (
+                time.perf_counter() - total_start
+            ) * 1000
+
+            return {
+                "message": "Please clarify your sales question.",
+                "question": question,
+                "intent": intent,
+                "answer": (
+                    intent_result.clarification
+                    or "I can help with sales summaries, daily sales and best-selling products."
+                ),
+                "analytics_data": None,
+                "performance": {
+                    "intent_detection_ms": round(intent_time, 2),
+                    "cache_hit": False,
+                    "cache_lookup_ms": 0,
+                    "database_retrieval_ms": 0,
+                    "answer_formatting_ms": 0,
+                    "total_response_time_ms": round(total_time, 2)
+                }
+            }
+
+        # ---------------------------------------------
+        # STAGE 2: Cache Lookup
+        # ---------------------------------------------
+
+        cache_key = f"sales:{intent}:{days}:{limit}"
+
+        cache_start = time.perf_counter()
+
+        analytics_data = get_cached_analytics(cache_key)
+
+        cache_lookup_time = (
+            time.perf_counter() - cache_start
+        ) * 1000
+
+        if analytics_data is not None:
+
+            cache_hit = True
+
+        else:
+
+            # -----------------------------------------
+            # STAGE 3: Database Retrieval
+            # -----------------------------------------
+
+            database_start = time.perf_counter()
+
+            if intent == "summary":
+
+                analytics_data = get_sales_analytics_summary(
+                    days=days,
+                    db=db
+                )
+
+            elif intent == "daily":
+
+                analytics_data = get_daily_sales_analytics(
+                    days=days,
+                    db=db
+                )
+
+            elif intent == "products":
+
+                analytics_data = get_product_sales_analytics(
+                    days=days,
+                    limit=limit,
+                    db=db
+                )
+
+            else:
+
+                raise HTTPException(
+                    status_code=400,
+                    detail="Unsupported sales analytics intent."
+                )
+
+            database_time = (
+                time.perf_counter() - database_start
+            ) * 1000
+
+            # -----------------------------------------
+            # Store verified database results in cache
+            # -----------------------------------------
+
+            set_cached_analytics(
+                cache_key=cache_key,
+                data=analytics_data
+            )
+
+        # ---------------------------------------------
+        # STAGE 4: Answer Formatting
+        # ---------------------------------------------
+
+        formatting_start = time.perf_counter()
+
+        answer = format_sales_answer(
+            question=question,
+            intent=intent,
+            analytics_data=analytics_data
+        )
+
+        formatting_time = (
+            time.perf_counter() - formatting_start
+        ) * 1000
+
+        # ---------------------------------------------
+        # STAGE 5: Total Response Time
+        # ---------------------------------------------
+
+        total_time = (
+            time.perf_counter() - total_start
+        ) * 1000
+
+        # ---------------------------------------------
+        # Return complete response and performance data
+        # ---------------------------------------------
+
+        return {
+            "message": "Sales analytics answer generated successfully",
+            "question": question,
+            "intent": intent,
+            "analysis_period_days": days,
+            "answer": answer,
+            "analytics_data": analytics_data,
+            "performance": {
+                "intent_detection_ms": round(intent_time, 2),
+                "cache_hit": cache_hit,
+                "cache_lookup_ms": round(cache_lookup_time, 2),
+                "database_retrieval_ms": round(database_time, 2),
+                "answer_formatting_ms": round(formatting_time, 2),
+                "total_response_time_ms": round(total_time, 2)
+            }
+        }
+
+    except HTTPException:
+        raise
+
+    except ValueError as error:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
+
+    except RuntimeError as error:
+
+        print("Sales analytics agent error:", str(error))
+
+        raise HTTPException(
+            status_code=502,
+            detail="The sales analytics AI agent is temporarily unavailable."
+        )
+
+    except Exception as error:
+
+        print("Sales analytics chat error:", str(error))
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to process the sales analytics question."
         )

@@ -876,3 +876,81 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
     );
   }
 }
+
+
+
+
+
+
+
+# POST: Record expired stock action
+@app.post("/expiry-records")
+def create_expiry_record(
+    record_data: dict,
+    db: Session = Depends(get_db)
+):
+    batch = db.query(ProductBatch).filter(
+        ProductBatch.id == record_data.get("batch_id")
+    ).first()
+
+    if not batch:
+        raise HTTPException(
+            status_code=404,
+            detail="Product batch not found"
+        )
+
+    quantity = float(record_data.get("quantity", 0))
+    action = record_data.get("action")
+
+    allowed_actions = ["disposal", "supplier_return"]
+
+    if action not in allowed_actions:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid action"
+        )
+
+    if quantity <= 0 or quantity > batch.quantity:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid quantity for this batch"
+        )
+
+    if batch.expiry_date >= date.today():
+        raise HTTPException(
+            status_code=400,
+            detail="This batch has not expired yet"
+        )
+
+    record = ExpiryRecord(
+        batch_id=batch.id,
+        quantity=quantity,
+        action=action,
+        reason=record_data.get("reason")
+    )
+
+    try:
+        batch.quantity -= quantity
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+
+        return {
+            "message": "Expiry action recorded successfully",
+            "batch_id": batch.id,
+            "quantity_removed": quantity,
+            "remaining_batch_quantity": batch.quantity,
+            "action": action
+        }
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to record expiry action"
+        )
+
+
+
+
+chart----https://chatgpt.com/s/t_6aef3d2909dc8191ac5b2b6a92cd76e7

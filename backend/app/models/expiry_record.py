@@ -15,7 +15,11 @@ from app.database import Base
 class ExpiryRecord(Base):
     __tablename__ = "expiry_records"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
 
     batch_id = Column(
         Integer,
@@ -80,4 +84,33 @@ class ExpiryRecord(Base):
     recorded_at = Column(
         DateTime(timezone=True),
         server_default=func.now()
+    )
+
+    # Owner approval tracking
+    approval_status = Column(
+        String(20),
+        nullable=False,
+        default="pending"
+    )
+
+    approved_by = Column(
+        Integer,
+        nullable=True
+    )
+
+    owner_approved_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    # Expiry action execution tracking
+    action_status = Column(
+        String(20),
+        nullable=False,
+        default="requested"
+    )
+
+    action_completed_at = Column(
+        DateTime(timezone=True),
+        nullable=True
     )
