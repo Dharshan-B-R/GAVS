@@ -83,6 +83,21 @@ app = FastAPI(
     version="1.0.0"
 )
 
+
+
+# ==========================================
+# AUTHENTICATION ROUTER
+# Purpose: Register authentication endpoints.
+# ==========================================
+
+from app.auth.routes import router as auth_router
+
+app.include_router(auth_router)
+
+
+
+
+
 # ---------------------------------------------------------
 # MIDDLEWARE: Cross-Origin Resource Sharing
 # Purpose: Allow the Flutter Web application to communicate

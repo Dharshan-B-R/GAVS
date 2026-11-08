@@ -178,7 +178,14 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
 
 
 
-  /// Loads initial backend data when the application starts.
+  
+  // Backend-generated restock recommendation state.
+  List<Map<String, dynamic>> restockRecommendations = [];
+  final Set<int> selectedRestockProducts = <int>{};
+  bool isRestockLoading = false;
+  String? restockError;
+  bool purchasePlanApproved = false;
+/// Loads initial backend data when the application starts.
 
   @override
 
@@ -284,7 +291,9 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
 
 
 
-      if (showMessage) {
+      
+      loadRestockRecommendations();
+if (showMessage) {
 
         showSnackBar(
 
@@ -669,9 +678,10 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
 
 
           if (index == 1) {
-
             loadBackendData();
-
+          } else if (index == 2) {
+            loadBackendData();
+            loadRestockRecommendations();
           }
 
         },
@@ -1056,7 +1066,10 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
 
                     });
 
-                  },
+                  
+                    loadBackendData();
+                    loadRestockRecommendations();
+},
 
                 ),
 
@@ -1682,169 +1695,386 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
     }
   }
 
-  /// Shows products that need replenishment based on backend stock levels.
 
-  Widget buildPurchasing() {
-
-    final lowStockProducts = products
-
-        .where((p) => p.quantity <= p.minimumStock)
-
-        .toList();
-
-
-
-    return RefreshIndicator(
-
-      onRefresh: () => loadBackendData(showMessage: true),
-
-      child: ListView(
-
-        padding: const EdgeInsets.all(20),
-
-        children: [
-
-          const Text(
-
-            'Smart Purchasing',
-
-            style: TextStyle(
-
-              fontSize: 28,
-
-              fontWeight: FontWeight.bold,
-
-            ),
-
+  /// Loads backend-generated replenishment recommendations.
+  /// Method: GET /inventory/restock-recommendations?days=30&warning_days=7.
+  Future<void> loadRestockRecommendations() async {
+    if (!mounted) return;
+    setState(() {
+      isRestockLoading = true;
+      restockError = null;
+    });
+    try {
+      final response = await ApiService.getRestockRecommendations(
+        days: 30,
+        warningDays: 7,
+      );
+      final rawItems = response['recommendations'] as List<dynamic>? ?? [];
+      final loadedItems = rawItems
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        restockRecommendations = loadedItems;
+        selectedRestockProducts.removeWhere(
+          (id) => !loadedItems.any(
+            (item) => (item['product_id'] as num?)?.toInt() == id,
           ),
-
-          const SizedBox(height: 8),
-
-          const Text(
-
-            'Review low-stock products before planning purchases.',
-
-          ),
-
-          const SizedBox(height: 20),
-
-
-
-          if (isLoading)
-
-            const LinearProgressIndicator(),
-
-
-
-          if (loadError != null)
-
-            _errorCard(),
-
-
-
-          if (!isLoading &&
-
-              loadError == null &&
-
-              lowStockProducts.isEmpty)
-
-            const Card(
-
-              child: Padding(
-
-                padding: EdgeInsets.all(20),
-
-                child: Text(
-
-                  'No low-stock products right now.',
-
-                ),
-
-              ),
-
-            )
-
-          else
-
-            ...lowStockProducts.map(
-
-              (product) => Card(
-
-                child: ListTile(
-
-                  leading: const Icon(
-
-                    Icons.warning_amber_rounded,
-
-                    color: Colors.orange,
-
-                  ),
-
-                  title: Text(product.name),
-
-                  subtitle: Text(
-
-                    '${product.quantity} ${product.unit} remaining · '
-
-                    'Minimum ${product.minimumStock}',
-
-                  ),
-
-                  trailing: Text(
-
-                    '₹${product.purchasePrice.toStringAsFixed(2)}',
-
-                  ),
-
-                ),
-
-              ),
-
-            ),
-
-
-
-          const SizedBox(height: 20),
-
-
-
-          const Text(
-
-            'Purchase approval',
-
-            style: TextStyle(
-
-              fontWeight: FontWeight.bold,
-
-              fontSize: 18,
-
-            ),
-
-          ),
-
-
-
-          const SizedBox(height: 8),
-
-
-
-          const Text(
-
-            'Review recommendations before purchasing. KiranaAI does not '
-
-            'place orders or contact suppliers without owner approval.',
-
-          ),
-
-        ],
-
-      ),
-
-    );
-
+        );
+        isRestockLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        isRestockLoading = false;
+        restockError = error.toString();
+      });
+    }
   }
 
+  /// Finds the product record used to obtain its purchase price.
+  Product? _productForRecommendation(Map<String, dynamic> recommendation) {
+    final id = (recommendation['product_id'] as num?)?.toInt();
+    for (final product in products) {
+      if (product.id == id) return product;
+    }
+    return null;
+  }
 
+  /// Converts a backend numeric value safely to a double.
+  double _recommendationNumber(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  /// Calculates the estimated cost for one recommended product.
+  double _recommendationCost(Map<String, dynamic> recommendation) {
+    final product = _productForRecommendation(recommendation);
+    final quantity = _recommendationNumber(
+      recommendation['suggested_reorder_quantity'],
+    );
+    return (product?.purchasePrice ?? 0) * quantity;
+  }
+
+  /// Calculates the estimated cost of all selected products.
+  double _selectedPurchaseTotal() {
+    return restockRecommendations
+        .where((item) => selectedRestockProducts.contains(
+              (item['product_id'] as num?)?.toInt(),
+            ))
+        .fold(0.0, (total, item) => total + _recommendationCost(item));
+  }
+
+  /// Requests owner confirmation for the selected purchase plan.
+  /// This is a local confirmation only; it does not place an order.
+  Future<void> _approvePurchasePlan() async {
+    if (selectedRestockProducts.isEmpty) return;
+    final total = _selectedPurchaseTotal();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm purchase plan'),
+        content: Text(
+             'You selected ${selectedRestockProducts.length} product(s). '
+            'Estimated total: ₹${total.toStringAsFixed(2)}.\n\n'
+            'This confirms your plan only. No order will be placed.',
+              ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Review again'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Confirm plan'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      setState(() => purchasePlanApproved = true);
+      showSnackBar('Purchase plan approved for review. No order was placed.');
+    }
+  }
+
+  /// Formats quantities without unnecessary decimal zeroes.
+  String _formatRecommendationQuantity(double value) {
+    return value % 1 == 0
+        ? value.toStringAsFixed(0)
+        : value.toStringAsFixed(2);
+  }
+
+  /// Builds the Purchasing page from backend restock recommendations.
+  /// Method: GET /inventory/restock-recommendations.
+  Widget buildPurchasing() {
+    final selectedCount = selectedRestockProducts.length;
+    final selectedTotal = _selectedPurchaseTotal();
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        await loadBackendData();
+        await loadRestockRecommendations();
+      },
+      child: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          const Text(
+            'Smart Purchasing',
+            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          const Text('Review stock recommendations before planning purchases.'),
+          const SizedBox(height: 20),
+          if (isLoading || isRestockLoading)
+            const LinearProgressIndicator(),
+          if (loadError != null) _errorCard(),
+          if (restockError != null)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Could not load restock recommendations.',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(restockError!),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: loadRestockRecommendations,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Retry'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (!isRestockLoading &&
+              restockError == null &&
+              restockRecommendations.isEmpty)
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: Row(
+                  children: [
+                    Icon(Icons.check_circle_outline, color: Colors.green),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Text('No products currently require restocking.'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ...restockRecommendations.map((recommendation) {
+            final product = _productForRecommendation(recommendation);
+            final productId =
+                (recommendation['product_id'] as num?)?.toInt() ?? -1;
+            final name = recommendation['product_name']?.toString() ??
+                product?.name ?? 'Unknown product';
+            final unit = recommendation['unit']?.toString() ??
+                product?.unit ?? 'pieces';
+            final currentStock =
+                _recommendationNumber(recommendation['current_stock']);
+            final minimumStock =
+                _recommendationNumber(recommendation['minimum_stock']);
+            final averageDailySales =
+                _recommendationNumber(recommendation['average_daily_sales']);
+            final suggestedQuantity = _recommendationNumber(
+              recommendation['suggested_reorder_quantity'],
+            );
+            final remainingDays = recommendation['estimated_days_remaining'];
+            final cost = _recommendationCost(recommendation);
+            final selected = selectedRestockProducts.contains(productId);
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 12),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.warning_amber_rounded,
+                          color: Colors.orange,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            name,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        Checkbox(
+                          value: selected,
+                          onChanged: productId < 0
+                              ? null
+                              : (value) {
+                                  setState(() {
+                                    if (value == true) {
+                                      selectedRestockProducts.add(productId);
+                                    } else {
+                                      selectedRestockProducts.remove(productId);
+                                    }
+                                    purchasePlanApproved = false;
+                                  });
+                                },
+                        ),
+                      ],
+                    ),
+                    const Divider(),
+                    _purchasingDetail(
+                      'Current stock',
+                      '${_formatRecommendationQuantity(currentStock)} $unit',
+                    ),
+                    _purchasingDetail(
+                      'Minimum stock',
+                      '${_formatRecommendationQuantity(minimumStock)} $unit',
+                    ),
+                    _purchasingDetail(
+                      'Average daily sales',
+                      '${_formatRecommendationQuantity(averageDailySales)} $unit',
+                    ),
+                    _purchasingDetail(
+                      'Estimated days remaining',
+                      remainingDays == null
+                          ? 'Not available (no recorded sales)'
+                          : '${_formatRecommendationQuantity(_recommendationNumber(remainingDays))} days',
+                    ),
+                    _purchasingDetail(
+                      'Suggested reorder',
+                      '${_formatRecommendationQuantity(suggestedQuantity)} $unit',
+                      emphasize: true,
+                    ),
+                    _purchasingDetail(
+                      'Purchase price',
+                      product == null
+                          ? 'Unavailable'
+                          : '₹${product.purchasePrice.toStringAsFixed(2)} / $unit',
+                    ),
+                    _purchasingDetail(
+                      'Estimated purchase cost',
+                      product == null
+                          ? 'Unavailable'
+                          : '₹${cost.toStringAsFixed(2)}',
+                      emphasize: true,
+                    ),
+                    if (product == null)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: Text(
+                          'Purchase price could not be matched to this product.',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          }),
+          if (restockRecommendations.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Purchase approval',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _purchasingDetail('Selected products', '$selectedCount'),
+                    _purchasingDetail(
+                      'Estimated total',
+                      '₹${selectedTotal.toStringAsFixed(2)}',
+                      emphasize: true,
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed:
+                            selectedCount == 0 ? null : _approvePurchasePlan,
+                        icon: const Icon(Icons.verified_outlined),
+                        label: const Text('Review and approve plan'),
+                      ),
+                    ),
+                    if (purchasePlanApproved)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 10),
+                        child: Text(
+                          'Plan approved for review. No order has been placed.',
+                          style: TextStyle(
+                            color: Colors.green,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'KiranaAI does not place orders or contact suppliers. '
+                      'Owner approval here confirms the plan only.',
+                      style: TextStyle(color: Colors.black54),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Builds one label and value row in the Purchasing page.
+  Widget _purchasingDetail(
+    String label,
+    String value, {
+    bool emphasize = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Colors.black54,
+                fontWeight: emphasize ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                fontWeight: emphasize ? FontWeight.bold : FontWeight.w500,
+                color: emphasize ? const Color(0xFF16845B) : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   /// Displays application settings and the live backend connection status.
 

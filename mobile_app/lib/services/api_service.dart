@@ -68,6 +68,36 @@ class ApiService {
     );
   }
 
+  /// FUNCTION: Get Smart Restock Recommendations
+  /// Method: GET
+  /// Endpoint: /inventory/restock-recommendations
+  /// Purpose: Retrieve stock coverage and suggested reorder quantities.
+  static Future<Map<String, dynamic>> getRestockRecommendations({
+    int days = 30,
+    int warningDays = 7,
+  }) async {
+    final uri = Uri.parse(
+      '$baseUrl/inventory/restock-recommendations',
+    ).replace(
+      queryParameters: {
+        'days': days.toString(),
+        'warning_days': warningDays.toString(),
+      },
+    );
+
+    final response = await http
+        .get(uri)
+        .timeout(timeoutDuration);
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+
+    throw Exception(
+      'Unable to load restock recommendations: ${response.body}',
+    );
+  }
+
   /// FUNCTION: Add New Product
   /// Method: POST
   /// Endpoint: /products
