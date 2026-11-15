@@ -489,3 +489,49 @@ def test_employee_ai_cannot_read_owner_budget_or_pending_approvals(client):
     assert "approval" in response.json()["restricted_agents"]
     assert "budget" not in response.json()["results"]
     assert "approval" not in response.json()["results"]
+
+
+
+def test_purchase_approval_cannot_exceed_cash_budget(client, db_session):
+    owner = register_owner(client, "budget-guard-owner@example.com")
+    shop_id = owner["shop"]["id"]
+    supplier_response = client.post("/auth/register/distributor", json={
+        "full_name": "Budget Supplier",
+        "email": "budget-supplier@example.com",
+        "password": "SupplierPass@123",
+        "business_name": "Budget Wholesale",
+    })
+    supplier_id = supplier_response.json()["supplier"]["id"]
+    client.post(
+        f"/shops/{shop_id}/distributors",
+        headers=auth(owner["access_token"]),
+        json={"supplier_id": supplier_id},
+    )
+    product = Product(
+        shop_id=shop_id, name="Detergent", quantity=0, minimum_stock=1,
+        purchase_price=100, selling_price=120, unit="pack", is_active=True,
+    )
+    db_session.add(product)
+    db_session.flush()
+    client.put(
+        f"/shops/{shop_id}/purchase-budget",
+        headers=auth(owner["access_token"]),
+        json={"available_amount": "100.00", "currency": "INR"},
+    )
+    proposal = client.post(
+        f"/shops/{shop_id}/purchase-proposals",
+        headers=auth(owner["access_token"]),
+        json={
+            "supplier_id": supplier_id,
+            "items": [{"product_id": product.id, "quantity": "2", "unit_price": "100"}],
+        },
+    )
+    assert proposal.status_code == 201
+    proposal_id = proposal.json()["proposal_id"]
+    approval = client.post(
+        f"/shops/{shop_id}/purchase-proposals/{proposal_id}/decision",
+        headers=auth(owner["access_token"]),
+        json={"approve": True},
+    )
+    assert approval.status_code == 409
+    assert db_session.query(Purchase).filter(Purchase.shop_id == shop_id).count() == 0
