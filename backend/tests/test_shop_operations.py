@@ -482,7 +482,7 @@ def test_employee_ai_cannot_read_owner_budget_or_pending_approvals(client):
     response = client.post(
         f"/shops/{shop_id}/agents/orchestrate",
         headers=auth(accepted.json()["access_token"]),
-        json={"question": "What is my cash budget and pending purchase approvals?"},
+        json={"question": "What is my cash available and pending order?"},
     )
     assert response.status_code == 200, response.text
     assert "budget" in response.json()["restricted_agents"]
