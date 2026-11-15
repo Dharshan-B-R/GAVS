@@ -1,4 +1,3 @@
-
 # ---------------------------------------------------------
 # MODEL: Purchase
 # Purpose:
@@ -16,9 +15,20 @@ from app.database import Base
 class Purchase(Base):
     __tablename__ = "purchases"
 
-    id = Column(Integer, primary_key=True, index=True)\n\n    shop_id = Column(Integer, ForeignKey("shops.id", ondelete="RESTRICT"), nullable=False, index=True)
+    id = Column(Integer, primary_key=True, index=True)
+    shop_id = Column(Integer, ForeignKey("shops.id", ondelete="RESTRICT"), nullable=False, index=True)
 
-    proposal_id = Column(\n        Integer, ForeignKey("purchase_proposals.id", ondelete="RESTRICT"),\n        nullable=True, unique=True, index=True\n    )\n\n    status = Column(String(20), nullable=False, default="received", server_default="received")\n\n    supplier_id = Column(
+    proposal_id = Column(
+        Integer,
+        ForeignKey("purchase_proposals.id", ondelete="RESTRICT"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
+    status = Column(String(20), nullable=False, default="received", server_default="received")
+
+    supplier_id = Column(
         Integer,
         ForeignKey("suppliers.id"),
         nullable=False,
@@ -54,17 +64,14 @@ class Purchase(Base):
         onupdate=func.now()
     )
 
-    # Relationship with supplier
     supplier = relationship("Supplier")
 
-    # Relationship with purchase items
     items = relationship(
         "PurchaseItem",
         back_populates="purchase",
         cascade="all, delete-orphan"
     )
 
-    # Relationship with supplier payment records
     payments = relationship(
         "PurchasePayment",
         back_populates="purchase",
