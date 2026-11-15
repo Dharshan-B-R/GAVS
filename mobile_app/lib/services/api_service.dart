@@ -578,6 +578,19 @@ class ApiService {
       body: {'is_active': active});
   }
 
+  static Future<List<dynamic>> getInventoryBatches() async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/inventory/batches');
+  }
+
+  static Future<Map<String, dynamic>> verifyInventoryBatch(
+    int batchId, double verifiedQuantity) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/product-batches/$batchId/verify',
+      query: {'shop_id': shopId.toString()},
+      body: {'verified_quantity': verifiedQuantity, 'reason': 'Physical batch verification'});
+  }
+
   static Future<List<dynamic>> getEmployees() async {
     final shopId = await _requireActiveShopId();
     return _requestList('/shops/$shopId/employees');
