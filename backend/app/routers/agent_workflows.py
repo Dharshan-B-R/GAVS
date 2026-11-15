@@ -67,6 +67,17 @@ def reorder_recommendations(
     return build_reorder_recommendations(db, days, lead_time_days, safety_days, limit, shop_id=shop_id)
 
 
+@router.get("/shops/{shop_id}/agents/supplier-prices")
+def supplier_prices(
+    shop_id: int,
+    limit: int = Query(100, ge=1, le=500),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    """Compare recorded supplier invoice prices for products in this shop."""
+    return compare_supplier_prices(db, shop_id, limit)
+
+
 @router.get("/shops/{shop_id}/agents/suppliers")
 def supplier_comparison(
     shop_id: int,
@@ -112,6 +123,7 @@ def orchestrate_question(
             results["reorder"] = build_reorder_recommendations(db, shop_id=shop_id)
         elif agent == "supplier":
             results["suppliers"] = compare_suppliers(db, shop_id)
+            results["supplier_prices"] = compare_supplier_prices(db, shop_id)
         elif agent == "budget":
             from app.models.shop_purchase_budget import ShopPurchaseBudget
             budget = db.query(ShopPurchaseBudget).filter(ShopPurchaseBudget.shop_id == shop_id).first()
