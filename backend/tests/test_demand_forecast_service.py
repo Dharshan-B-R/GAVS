@@ -12,7 +12,7 @@ from app.services.reorder_service import build_reorder_recommendations
 
 def _product(db, **overrides):
     values = {
-        "name": "Forecast Rice", "category": "Grocery",
+        "shop_id": 1,\n        "name": "Forecast Rice", "category": "Grocery",
         "quantity": 20, "minimum_stock": 5,
         "purchase_price": 10, "selling_price": 15,
         "unit": "kg", "is_active": True,
