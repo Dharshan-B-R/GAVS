@@ -268,7 +268,7 @@ def update_product(
 def delete_product(
     product_id: int,
     shop_id: int = Query(..., gt=0),
-    membership=Depends(require_shop_staff),
+    membership=Depends(require_shop_owner),
     db: Session = Depends(get_db),
 ):
     product = db.query(Product).filter(
