@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from app.models.product import Product
+from app.models.shop import Shop
 from app.models.product_batch import ProductBatch
 from app.models.stock_movement import StockMovement
 from app.services.inventory_intelligence_service import (
@@ -18,6 +19,10 @@ from app.services.inventory_intelligence_service import (
 
 def _product(db, **overrides):
     """Create a mature active product with predictable inventory values."""
+    if db.get(Shop, 1) is None:
+        db.add(Shop(id=1, name="Inventory Test Shop"))
+        db.flush()
+
     values = {
         "shop_id": 1,
         "name": "Test Rice",
