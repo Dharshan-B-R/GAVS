@@ -19,10 +19,15 @@ from app.services.inventory_intelligence_service import (
 def _product(db, **overrides):
     """Create a mature active product with predictable inventory values."""
     values = {
-        "shop_id": 1,\n        "name": "Test Rice", "category": "Grocery",
-        "quantity": 50, "minimum_stock": 10,
-        "purchase_price": 20, "selling_price": 25,
-        "unit": "kg", "is_active": True,
+        "shop_id": 1,
+        "name": "Test Rice",
+        "category": "Grocery",
+        "quantity": 50,
+        "minimum_stock": 10,
+        "purchase_price": 20,
+        "selling_price": 25,
+        "unit": "kg",
+        "is_active": True,
         "created_at": datetime.now(timezone.utc) - timedelta(days=120),
     }
     values.update(overrides)
