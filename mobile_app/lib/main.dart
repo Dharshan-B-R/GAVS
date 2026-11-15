@@ -1153,13 +1153,13 @@ if (showMessage) {
 
             ),
 
-            child: const Column(
+            child: Column(
 
               crossAxisAlignment: CrossAxisAlignment.start,
 
               children: [
 
-                Icon(
+                const Icon(
 
                   Icons.storefront,
 
@@ -1173,7 +1173,7 @@ if (showMessage) {
 
                 Text(
 
-                  'Welcome, Shop Owner!',
+                  'Welcome, ${widget.userRole == 'owner' ? 'Shop Owner' : 'Employee'}!',
 
                   style: TextStyle(
 
@@ -1191,9 +1191,9 @@ if (showMessage) {
 
                 Text(
 
-                  'Manage your shop smarter with KiranaAI.',
+                  '${_activeShopName ?? widget.shopName} · Manage your shop smarter with KiranaAI.',
 
-                  style: TextStyle(color: Colors.white),
+                  style: const TextStyle(color: Colors.white),
 
                 ),
 
