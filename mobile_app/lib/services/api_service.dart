@@ -89,17 +89,6 @@ class ApiService {
       }
 
       await _secureStorage.write(key: _tokenKey, value: token);
-      try {
-        final shops = await refreshMyShops();
-        if (shops.isEmpty) {
-          await logout();
-          throw Exception('This account is not linked to an active shop.');
-        }
-      } catch (_) {
-        await logout();
-        rethrow;
-      }
-
       return responseData;
     }
 
