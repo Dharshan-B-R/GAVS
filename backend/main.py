@@ -7239,3 +7239,129 @@ def sales_analytics_chat(
             status_code=500,
             detail="Unable to process the sales analytics question."
         )
+
+
+
+# ---------------------------------------------------------
+# API: Read-only Inventory Agent Chat
+# Method: POST
+# Endpoint: /agents/inventory/chat
+# Purpose:
+# 1. Understand the owner's inventory question.
+# 2. Retrieve deterministic inventory intelligence from the database.
+# 3. Return both structured data and a grounded natural-language answer.
+# This endpoint never changes stock or creates purchase orders.
+# ---------------------------------------------------------
+
+@app.post("/agents/inventory/chat")
+def inventory_agent_chat(
+    question: str = Body(
+        ...,
+        embed=True,
+        min_length=1,
+        max_length=1000
+    ),
+    db: Session = Depends(get_db)
+):
+    import time
+
+    total_start = time.perf_counter()
+
+    try:
+        from app.agents.inventory_agent import (
+            understand_inventory_question,
+            format_inventory_answer,
+        )
+        from app.services.inventory_intelligence_service import analyze_inventory
+
+        # Stage 1: classify the owner's question using local rules first,
+        # with Gemini used only when the question needs language understanding.
+        intent_start = time.perf_counter()
+        intent_result = understand_inventory_question(question)
+        intent_time = (time.perf_counter() - intent_start) * 1000
+
+        intent = intent_result.intent
+        days = intent_result.days
+        limit = intent_result.limit
+
+        if intent == "unknown":
+            return {
+                "message": "Please clarify your inventory question.",
+                "question": question,
+                "intent": intent,
+                "answer": (
+                    intent_result.clarification
+                    or "I can help with low stock, stock coverage, dead stock, "
+                       "fast- and slow-moving products, expiry, data readiness, "
+                       "and overall inventory health."
+                ),
+                "analytics_data": None,
+                "performance": {
+                    "intent_detection_ms": round(intent_time, 2),
+                    "database_retrieval_ms": 0,
+                    "answer_formatting_ms": 0,
+                    "total_response_time_ms": round(
+                        (time.perf_counter() - total_start) * 1000, 2
+                    ),
+                },
+            }
+
+        # Stage 2: run read-only SQL calculations. The service is the single
+        # source of inventory figures; the agent only explains its results.
+        database_start = time.perf_counter()
+        analytics_data = analyze_inventory(
+            db=db,
+            intent=intent,
+            days=days,
+            limit=limit,
+        )
+        database_time = (time.perf_counter() - database_start) * 1000
+
+        # Stage 3: format only the values returned by the service.
+        formatting_start = time.perf_counter()
+        answer = format_inventory_answer(
+            question=question,
+            intent=intent,
+            analytics_data=analytics_data,
+        )
+        formatting_time = (time.perf_counter() - formatting_start) * 1000
+
+        return {
+            "message": "Inventory analysis completed successfully.",
+            "question": question,
+            "intent": intent,
+            "analysis_period_days": analytics_data.get(
+                "analysis_period_days",
+                analytics_data.get("horizon_days", days),
+            ),
+            "answer": answer,
+            "analytics_data": analytics_data,
+            "performance": {
+                "intent_detection_ms": round(intent_time, 2),
+                "database_retrieval_ms": round(database_time, 2),
+                "answer_formatting_ms": round(formatting_time, 2),
+                "total_response_time_ms": round(
+                    (time.perf_counter() - total_start) * 1000, 2
+                ),
+            },
+        }
+
+    except HTTPException:
+        raise
+
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    except RuntimeError as error:
+        print("Inventory agent understanding error:", str(error))
+        raise HTTPException(
+            status_code=502,
+            detail="The inventory AI agent is temporarily unavailable.",
+        )
+
+    except Exception as error:
+        print("Inventory agent chat error:", str(error))
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to process the inventory question.",
+        )
