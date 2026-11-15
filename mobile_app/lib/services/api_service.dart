@@ -467,6 +467,27 @@ class ApiService {
       body: {'available_amount': amount, 'currency': 'INR'});
   }
 
+  static Future<Map<String, dynamic>> registerOwner(Map<String, dynamic> payload) async =>
+      _requestJson('POST', '/auth/register/owner', body: payload);
+
+  static Future<Map<String, dynamic>> registerSupplier(Map<String, dynamic> payload) async =>
+      _requestJson('POST', '/auth/register/distributor', body: payload);
+
+  static Future<List<dynamic>> getDistributorDirectory() async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/distributor-directory');
+  }
+
+  static Future<List<dynamic>> getShopPurchaseOrders() async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/purchase-orders');
+  }
+
+  static Future<List<dynamic>> getEmployeeInvitations() async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/auth/shops/$shopId/employees/invitations');
+  }
+
   static Future<List<dynamic>> getShopSuppliers() async {
     final shopId = await _requireActiveShopId();
     return _requestList('/shops/$shopId/distributors');
