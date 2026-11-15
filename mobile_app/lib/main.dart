@@ -309,6 +309,15 @@ class _LoginScreenState extends State<LoginScreen> {
                         },
                         child: const Text('Create an Owner or Supplier account'),
                       ),
+                      TextButton(
+                        onPressed: _busy ? null : () async {
+                          final accepted = await Navigator.of(context).push<bool>(
+                            MaterialPageRoute(builder: (_) => const EmployeeInvitationScreen()),
+                          );
+                          if (accepted == true && mounted) widget.onLogin();
+                        },
+                        child: const Text('Join a shop with an employee invitation'),
+                      ),
                     ],
                   ),
                 ),
@@ -3790,4 +3799,80 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       )),
     );
   }
+}
+
+
+class EmployeeInvitationScreen extends StatefulWidget {
+  const EmployeeInvitationScreen({super.key});
+
+  @override
+  State<EmployeeInvitationScreen> createState() => _EmployeeInvitationScreenState();
+}
+
+class _EmployeeInvitationScreenState extends State<EmployeeInvitationScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _token = TextEditingController();
+  final _name = TextEditingController();
+  final _password = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _token.dispose(); _name.dispose(); _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _accept() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() { _busy = true; _error = null; });
+    try {
+      await ApiService.acceptEmployeeInvitation(
+        token: _token.text.trim(),
+        fullName: _name.text.trim(),
+        password: _password.text,
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Join a shop')),
+    body: Center(child: SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Card(child: Padding(padding: const EdgeInsets.all(20),
+          child: Form(key: _formKey, child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Accept employee invitation',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              TextFormField(controller: _token,
+                decoration: const InputDecoration(labelText: 'Invitation token'),
+                validator: (v) => (v == null || v.trim().length < 20) ? 'Enter the invitation token' : null),
+              TextFormField(controller: _name,
+                decoration: const InputDecoration(labelText: 'Full name'),
+                validator: (v) => (v == null || v.trim().length < 2) ? 'Enter your name' : null),
+              TextFormField(controller: _password, obscureText: true,
+                decoration: const InputDecoration(labelText: 'Create password'),
+                validator: (v) => (v == null || v.length < 8) ? 'Use at least 8 characters' : null),
+              if (_error != null) Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(_error!, style: const TextStyle(color: Colors.red))),
+              const SizedBox(height: 16),
+              FilledButton(onPressed: _busy ? null : _accept,
+                child: Text(_busy ? 'Joining...' : 'Accept invitation')),
+            ],
+          )),
+        )),
+      ),
+    )),
+  );
 }
