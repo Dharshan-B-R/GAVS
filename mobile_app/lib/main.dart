@@ -468,6 +468,8 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   String? restockError;
   bool purchasePlanApproved = false;
   List<dynamic> _shopSuppliers = [];
+  List<dynamic> _supplierDirectory = [];
+  int? _supplierDirectorySelection;
   List<dynamic> _purchaseProposals = [];
   List<dynamic> _purchaseOrders = [];
   int? _selectedSupplierId;
@@ -2095,6 +2097,7 @@ if (showMessage) {
         ApiService.getPurchaseProposals(),
         ApiService.getShopPurchaseOrders(),
         ApiService.getPurchaseBudget(),
+        ApiService.getDistributorDirectory(),
       ]);
       if (!mounted) return;
       final suppliers = results[0] as List<dynamic>;
@@ -2103,6 +2106,9 @@ if (showMessage) {
         _shopSuppliers = suppliers;
         _purchaseProposals = results[1] as List<dynamic>;
         _purchaseOrders = results[2] as List<dynamic>;
+        _supplierDirectory = results[4] as List<dynamic>;
+        _supplierDirectorySelection ??= _supplierDirectory.isNotEmpty
+            ? (_supplierDirectory.first['supplier_id'] as num).toInt() : null;
         _selectedSupplierId ??= suppliers.isNotEmpty
             ? (suppliers.first['supplier_id'] as num).toInt() : null;
         _budgetController.text = budget['available_amount']?.toString() ?? '0.00';
@@ -2131,6 +2137,18 @@ if (showMessage) {
       if (mounted) showSnackBar('Budget update failed: $error', isError: true);
     } finally {
       if (mounted) setState(() => _budgetSaving = false);
+    }
+  }
+
+  Future<void> _connectSelectedSupplier() async {
+    final id = _supplierDirectorySelection;
+    if (id == null) return;
+    try {
+      await ApiService.connectSupplier(id);
+      await _loadPurchasePlanningData();
+      if (mounted) showSnackBar('Supplier connected to this shop.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not connect supplier: $error', isError: true);
     }
   }
 
@@ -2374,13 +2392,39 @@ if (showMessage) {
                     onChanged: (value) => setState(() => _selectedSupplierId = value),
                   ),
                 const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(child: TextField(controller: _supplierIdController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Supplier ID to connect', border: OutlineInputBorder()))),
-                  const SizedBox(width: 8),
-                  FilledButton.tonal(onPressed: _connectSupplierById, child: const Text('Connect')),
-                ]),
+                if (_supplierDirectory.isNotEmpty)
+                  Row(children: [
+                    Expanded(child: DropdownButtonFormField<int>(
+                      value: _supplierDirectorySelection,
+                      decoration: const InputDecoration(labelText: 'Find a supplier'),
+                      items: _supplierDirectory.map((raw) {
+                        final supplier = raw as Map<String, dynamic>;
+                        return DropdownMenuItem<int>(
+                          value: (supplier['supplier_id'] as num).toInt(),
+                          child: Text(supplier['name'].toString()),
+                        );
+                      }).toList(),
+                      onChanged: (value) => setState(() => _supplierDirectorySelection = value),
+                    )),
+                    const SizedBox(width: 8),
+                    FilledButton.tonal(onPressed: _connectSelectedSupplier, child: const Text('Connect')),
+                  ])
+                else
+                  const Text('No other active suppliers are registered yet. A supplier can create an account from the login screen.'),
+                const SizedBox(height: 8),
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  title: const Text('Connect by supplier ID'),
+                  children: [
+                    Row(children: [
+                      Expanded(child: TextField(controller: _supplierIdController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Supplier ID', border: OutlineInputBorder()))),
+                      const SizedBox(width: 8),
+                      FilledButton.tonal(onPressed: _connectSupplierById, child: const Text('Connect')),
+                    ]),
+                  ],
+                ),
               ],
             ))),
             const SizedBox(height: 12),
