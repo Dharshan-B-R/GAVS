@@ -64,6 +64,19 @@ def set_purchase_budget(
     budget = db.query(ShopPurchaseBudget).filter(
         ShopPurchaseBudget.shop_id == shop_id
     ).with_for_update().first()
+    committed_rows = db.query(PurchaseProposal.total_amount).filter(
+        PurchaseProposal.shop_id == shop_id,
+        PurchaseProposal.status.in_(["approved", "ordered"]),
+    ).all()
+    committed_amount = sum((row[0] for row in committed_rows), Decimal("0.00"))
+    if payload.available_amount < committed_amount:
+        raise HTTPException(
+            409,
+            detail={
+                "message": "Budget cannot be reduced below already approved or ordered proposals",
+                "committed_amount": str(committed_amount),
+            },
+        )
     if budget is None:
         budget = ShopPurchaseBudget(
             shop_id=shop_id,
