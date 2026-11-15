@@ -2106,7 +2106,8 @@ if (showMessage) {
         ApiService.getDistributorDirectory(),
       ]);
       if (!mounted) return;
-      final suppliers = results[0] as List<dynamic>;
+      final suppliers = (results[0] as List<dynamic>)
+          .where((raw) => raw['is_active'] == true).toList();
       final budget = results[3] as Map<String, dynamic>;
       setState(() {
         _shopSuppliers = suppliers;
