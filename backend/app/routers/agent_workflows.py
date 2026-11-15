@@ -9,7 +9,7 @@ from app.services.demand_forecast_service import forecast_demand
 from app.services.reorder_service import build_reorder_recommendations
 from app.agents.supplier_agent import compare_suppliers
 from app.agents.orchestrator import route_question
-from app.services.inventory_intelligence_service import analyze_inventory
+from app.services.inventory_intelligence_service import analyze_inventory, get_dead_stock
 from app.services.expiry_intelligence_service import analyze_expiry_risk
 from app.services.stockout_prediction_service import predict_stockout_risk
 from app.services.event_demand_service import analyze_event_demand
@@ -71,6 +71,18 @@ def stockout_risk(
     return predict_stockout_risk(
         db, shop_id, history_days, lead_time_days, warning_days, limit
     )
+
+
+@router.get("/shops/{shop_id}/agents/dead-stock")
+def dead_stock(
+    shop_id: int,
+    days: int = Query(90, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=100),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    """Identify mature, active products with stock and no recent recorded sales."""
+    return get_dead_stock(db, days=days, limit=limit, shop_id=shop_id)
 
 
 @router.get("/shops/{shop_id}/agents/expiry-risk")
@@ -154,7 +166,6 @@ def orchestrate_question(
             results["reorder"] = build_reorder_recommendations(db, shop_id=shop_id)
         elif agent == "supplier":
             results["suppliers"] = compare_suppliers(db, shop_id)
-            results["supplier_prices"] = compare_supplier_prices(db, shop_id)
             results["supplier_prices"] = compare_supplier_prices(db, shop_id)
         elif agent == "budget":
             from app.models.shop_purchase_budget import ShopPurchaseBudget
