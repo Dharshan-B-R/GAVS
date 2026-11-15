@@ -393,4 +393,197 @@ class ApiService {
       throw Exception('Unable to delete product: ${response.body}');
     }
   }
+
+  static Future<Map<String, dynamic>> _requestJson(
+    String method,
+    String path, {
+    Map<String, String>? query,
+    Map<String, dynamic>? body,
+  }) async {
+    final uri = Uri.parse('$baseUrl$path').replace(queryParameters: query);
+    final headers = await _authorizedHeaders(jsonContent: body != null);
+    late http.Response response;
+    switch (method) {
+      case 'GET':
+        response = await http.get(uri, headers: headers).timeout(timeoutDuration);
+        break;
+      case 'POST':
+        response = await http.post(uri, headers: headers,
+          body: body == null ? null : jsonEncode(body)).timeout(timeoutDuration);
+        break;
+      case 'PUT':
+        response = await http.put(uri, headers: headers,
+          body: body == null ? null : jsonEncode(body)).timeout(timeoutDuration);
+        break;
+      case 'PATCH':
+        response = await http.patch(uri, headers: headers,
+          body: body == null ? null : jsonEncode(body)).timeout(timeoutDuration);
+        break;
+      case 'DELETE':
+        response = await http.delete(uri, headers: headers).timeout(timeoutDuration);
+        break;
+      default:
+        throw ArgumentError('Unsupported HTTP method');
+    }
+    final decoded = response.body.isEmpty ? <String, dynamic>{}
+        : jsonDecode(response.body);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final detail = decoded is Map ? decoded['detail'] ?? decoded : decoded;
+      throw Exception(detail.toString());
+    }
+    if (decoded is Map<String, dynamic>) return decoded;
+    return {'data': decoded};
+  }
+
+  static Future<List<dynamic>> _requestList(String path) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl$path'),
+      headers: await _authorizedHeaders(),
+    ).timeout(timeoutDuration);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Request failed: ${response.body}');
+    }
+    return jsonDecode(response.body) as List<dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> getInventoryAgentAnswer(String question) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/agents/orchestrate',
+      body: {'question': question});
+  }
+
+  static Future<List<dynamic>> getSalesHistory({int limit = 50}) async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/sales?limit=$limit');
+  }
+
+  static Future<Map<String, dynamic>> createSale({
+    required List<Map<String, dynamic>> items,
+    String paymentMethod = 'cash',
+    double discountAmount = 0,
+    String? notes,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/sales',
+      query: {'shop_id': shopId.toString()},
+      body: {
+        'items': items,
+        'payment_method': paymentMethod,
+        'discount_amount': discountAmount,
+        'notes': notes,
+      });
+  }
+
+  static Future<Map<String, dynamic>> getPurchaseBudget() async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/purchase-budget');
+  }
+
+  static Future<Map<String, dynamic>> setPurchaseBudget(double amount) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PUT', '/shops/$shopId/purchase-budget',
+      body: {'available_amount': amount, 'currency': 'INR'});
+  }
+
+  static Future<List<dynamic>> getShopSuppliers() async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/distributors');
+  }
+
+  static Future<List<dynamic>> getSupplierComparisons() async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/agents/suppliers');
+  }
+
+  static Future<Map<String, dynamic>> connectSupplier(int supplierId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/distributors',
+      body: {'supplier_id': supplierId});
+  }
+
+  static Future<List<dynamic>> getPurchaseProposals() async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/purchase-proposals');
+  }
+
+  static Future<Map<String, dynamic>> createPurchaseProposal({
+    int? supplierId,
+    required List<Map<String, dynamic>> items,
+    String? rationale,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    final body = <String, dynamic>{'items': items, 'rationale': rationale};
+    if (supplierId != null) body['supplier_id'] = supplierId;
+    return _requestJson('POST', '/shops/$shopId/purchase-proposals', body: body);
+  }
+
+  static Future<Map<String, dynamic>> decidePurchaseProposal(
+    int proposalId, {required bool approve, String? note}) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST',
+      '/shops/$shopId/purchase-proposals/$proposalId/decision',
+      body: {'approve': approve, 'note': note});
+  }
+
+  static Future<Map<String, dynamic>> executePurchaseProposal(int proposalId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST',
+      '/shops/$shopId/purchase-proposals/$proposalId/execute');
+  }
+
+  static Future<Map<String, dynamic>> receivePurchaseOrder(
+    int purchaseId, List<Map<String, dynamic>> items) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST',
+      '/shops/$shopId/purchases/$purchaseId/receive',
+      body: {'items': items});
+  }
+
+  static Future<Map<String, dynamic>> adjustStock({
+    required int productId,
+    required double quantityChange,
+    required String reason,
+    String? batchNumber,
+    String? expiryDate,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    final body = <String, dynamic>{
+      'product_id': productId,
+      'quantity_change': quantityChange,
+      'reason': reason,
+    };
+    if (batchNumber != null) body['batch_number'] = batchNumber;
+    if (expiryDate != null) body['expiry_date'] = expiryDate;
+    return _requestJson('POST', '/shops/$shopId/inventory/adjustments', body: body);
+  }
+
+  static Future<List<dynamic>> getEmployees() async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/employees');
+  }
+
+  static Future<Map<String, dynamic>> inviteEmployee(String email) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/auth/shops/$shopId/employees/invitations',
+      body: {'email': email});
+  }
+
+  static Future<Map<String, dynamic>> acceptEmployeeInvitation({
+    required String token,
+    required String fullName,
+    required String password,
+  }) async {
+    return _requestJson('POST', '/auth/employees/accept-invitation',
+      body: {'invitation_token': token, 'full_name': fullName, 'password': password});
+  }
+
+  static Future<List<dynamic>> getSupplierOrders() async =>
+      _requestList('/supplier/orders');
+
+  static Future<Map<String, dynamic>> getSupplierProfile() async =>
+      _requestJson('GET', '/supplier/profile');
+
+  static Future<Map<String, dynamic>> confirmSupplierOrder(int purchaseId) async =>
+      _requestJson('POST', '/supplier/orders/$purchaseId/confirm');
+
 }
