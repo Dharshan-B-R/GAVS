@@ -15,6 +15,7 @@ from app.models.shop_distributor_connection import ShopDistributorConnection
 from app.models.supplier import Supplier
 from app.models.sale import Sale
 from app.models.purchase import Purchase
+from app.models.purchase_item import PurchaseItem
 from app.models.product import Product
 from app.models.product_batch import ProductBatch
 from app.models.stock_movement import StockMovement
@@ -186,7 +187,7 @@ def supplier_orders(
 ):
     rows = db.query(Purchase, Shop).join(
         Shop, Shop.id == Purchase.shop_id
-    ).options(joinedload(Purchase.items)).filter(
+    ).options(joinedload(Purchase.items).joinedload(PurchaseItem.product)).filter(
         Purchase.supplier_id == current_supplier.id,
         Purchase.status.in_(["ordered", "confirmed"]),
     ).order_by(Purchase.created_at.desc()).limit(100).all()
