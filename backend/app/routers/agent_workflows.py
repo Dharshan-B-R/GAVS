@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.auth.routes import require_shop_owner
+from app.auth.routes import require_shop_staff
 from app.services.demand_forecast_service import forecast_demand
 from app.services.reorder_service import build_reorder_recommendations
 from app.agents.supplier_agent import compare_suppliers
@@ -17,7 +17,7 @@ def demand_forecast(
     shop_id: int,
     days: int = Query(30, ge=7, le=365),
     limit: int = Query(50, ge=1, le=100),
-    membership=Depends(require_shop_owner),
+    membership=Depends(require_shop_staff),
     db: Session = Depends(get_db),
 ):
     return forecast_demand(db, days, limit, shop_id=shop_id)
@@ -30,7 +30,7 @@ def reorder_recommendations(
     lead_time_days: int = Query(7, ge=1, le=90),
     safety_days: int = Query(3, ge=0, le=60),
     limit: int = Query(50, ge=1, le=100),
-    membership=Depends(require_shop_owner),
+    membership=Depends(require_shop_staff),
     db: Session = Depends(get_db),
 ):
     return build_reorder_recommendations(db, days, lead_time_days, safety_days, limit, shop_id=shop_id)
@@ -39,7 +39,7 @@ def reorder_recommendations(
 @router.get("/shops/{shop_id}/agents/suppliers")
 def supplier_comparison(
     shop_id: int,
-    membership=Depends(require_shop_owner),
+    membership=Depends(require_shop_staff),
     db: Session = Depends(get_db),
 ):
     return compare_suppliers(db, shop_id)
@@ -49,7 +49,7 @@ def supplier_comparison(
 def orchestrate_question(
     shop_id: int,
     payload: dict,
-    membership=Depends(require_shop_owner),
+    membership=Depends(require_shop_staff),
     db: Session = Depends(get_db),
 ):
     question = payload.get("question")
