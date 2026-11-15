@@ -251,7 +251,7 @@ def get_data_readiness(db: Session, shop_id: int | None = None) -> dict[str, Any
     ).filter(*sales_filter, *tenant_filter).scalar() or 0
     units = db.query(func.coalesce(func.sum(-StockMovement.quantity_change), 0)).join(
         Product, Product.id == StockMovement.product_id
-    ).filter(*sales_filter).scalar() or 0
+    ).filter(*sales_filter, *tenant_filter).scalar() or 0
     if mature == 0:
         status, message = "insufficient_history", "No active products have completed 30 days of history."
     elif float(units) == 0:
