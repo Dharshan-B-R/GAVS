@@ -331,3 +331,68 @@ def test_account_endpoint_rejects_invalid_token(client):
         headers={"Authorization": "Bearer invalid-token"},
     )
     assert response.status_code == 401
+
+
+
+def test_owner_can_invite_and_employee_can_accept(client):
+    owner = client.post("/auth/register/owner", json=owner_payload())
+    owner_token = owner.json()["access_token"]
+    shop_id = owner.json()["shop"]["id"]
+
+    invite = client.post(
+        f"/auth/shops/{shop_id}/employees/invitations",
+        headers={"Authorization": f"Bearer {owner_token}"},
+        json={"email": "employee@example.com"},
+    )
+    assert invite.status_code == 201
+    invitation_token = invite.json()["invitation_token"]
+
+    accepted = client.post(
+        "/auth/employees/accept-invitation",
+        json={
+            "invitation_token": invitation_token,
+            "full_name": "Test Employee",
+            "password": "EmployeePass@123",
+        },
+    )
+    assert accepted.status_code == 201
+    assert accepted.json()["user"]["role"] == "Employee"
+    assert accepted.json()["shop_id"] == shop_id
+
+    employee_login = client.post(
+        "/auth/login",
+        data={"username": "employee@example.com", "password": "EmployeePass@123"},
+    )
+    employee_token = employee_login.json()["access_token"]
+    shops = client.get(
+        "/auth/shops",
+        headers={"Authorization": f"Bearer {employee_token}"},
+    )
+    assert shops.status_code == 200
+    assert shops.json()[0]["role"] == "Employee"
+
+
+def test_employee_cannot_invite_another_employee(client):
+    owner = client.post("/auth/register/owner", json=owner_payload())
+    shop_id = owner.json()["shop"]["id"]
+    owner_token = owner.json()["access_token"]
+    invite = client.post(
+        f"/auth/shops/{shop_id}/employees/invitations",
+        headers={"Authorization": f"Bearer {owner_token}"},
+        json={"email": "employee@example.com"},
+    )
+    token = invite.json()["invitation_token"]
+    client.post(
+        "/auth/employees/accept-invitation",
+        json={"invitation_token": token, "full_name": "Test Employee", "password": "EmployeePass@123"},
+    )
+    login = client.post(
+        "/auth/login",
+        data={"username": "employee@example.com", "password": "EmployeePass@123"},
+    )
+    response = client.post(
+        f"/auth/shops/{shop_id}/employees/invitations",
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        json={"email": "other@example.com"},
+    )
+    assert response.status_code == 403
