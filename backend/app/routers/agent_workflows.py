@@ -20,7 +20,7 @@ def demand_forecast(
     membership=Depends(require_shop_owner),
     db: Session = Depends(get_db),
 ):
-    return forecast_demand(db, days, limit)
+    return forecast_demand(db, days, limit, shop_id=shop_id)
 
 
 @router.get("/shops/{shop_id}/agents/reorder-recommendations")
@@ -33,7 +33,7 @@ def reorder_recommendations(
     membership=Depends(require_shop_owner),
     db: Session = Depends(get_db),
 ):
-    return build_reorder_recommendations(db, days, lead_time_days, safety_days, limit)
+    return build_reorder_recommendations(db, days, lead_time_days, safety_days, limit, shop_id=shop_id)
 
 
 @router.get("/shops/{shop_id}/agents/suppliers")
@@ -64,11 +64,11 @@ def orchestrate_question(
             from app.agents.inventory_agent import understand_inventory_question
             intent = understand_inventory_question(question)
             if intent.intent != "unknown":
-                results["inventory"] = analyze_inventory(db, intent.intent, intent.days, intent.limit)
+                results["inventory"] = analyze_inventory(db, intent.intent, intent.days, intent.limit, shop_id=shop_id)
         elif agent == "forecast":
-            results["forecast"] = forecast_demand(db)
+            results["forecast"] = forecast_demand(db, shop_id=shop_id)
         elif agent == "reorder":
-            results["reorder"] = build_reorder_recommendations(db)
+            results["reorder"] = build_reorder_recommendations(db, shop_id=shop_id)
         elif agent == "supplier":
             results["suppliers"] = compare_suppliers(db, shop_id)
         elif agent == "budget":
