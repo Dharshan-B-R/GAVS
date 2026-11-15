@@ -105,6 +105,9 @@ app.include_router(purchase_planning_router)
 from app.routers.agent_workflows import router as agent_workflows_router
 app.include_router(agent_workflows_router)
 
+from app.routers.shop_operations import router as shop_operations_router
+app.include_router(shop_operations_router)
+
 
 
 
