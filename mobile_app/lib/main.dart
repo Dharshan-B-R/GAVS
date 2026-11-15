@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import 'services/api_service.dart';
@@ -449,6 +451,18 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   bool isRestockLoading = false;
   String? restockError;
   bool purchasePlanApproved = false;
+  final TextEditingController _saleQuantityController = TextEditingController(text: '1');
+  final TextEditingController _aiQuestionController = TextEditingController();
+  int? _saleProductId;
+  String _salePaymentMethod = 'cash';
+  final Map<int, double> _saleCart = {};
+  List<dynamic> _salesHistory = [];
+  bool _salesLoading = false;
+  bool _saleSubmitting = false;
+  bool _aiLoading = false;
+  final List<Map<String, String>> _aiMessages = [
+    {'role': 'assistant', 'text': 'Ask about low stock, expiry, dead stock, sales trends, forecasts or reorder recommendations.'},
+  ];
 /// Loads initial backend data when the application starts.
 
   @override
@@ -906,15 +920,12 @@ if (showMessage) {
   Widget build(BuildContext context) {
 
     final pages = [
-
       buildDashboard(),
-
       buildInventory(),
-
+      buildSales(),
       buildPurchasing(),
-
+      buildAiAssistant(),
       buildSettings(),
-
     ];
 
 
@@ -944,6 +955,8 @@ if (showMessage) {
           if (index == 1) {
             loadBackendData();
           } else if (index == 2) {
+            _loadSalesHistory();
+          } else if (index == 3) {
             loadBackendData();
             loadRestockRecommendations();
           }
@@ -951,49 +964,13 @@ if (showMessage) {
         },
 
         destinations: const [
-
-          NavigationDestination(
-
-            icon: Icon(Icons.home_outlined),
-
-            selectedIcon: Icon(Icons.home),
-
-            label: 'Home',
-
-          ),
-
-          NavigationDestination(
-
-            icon: Icon(Icons.inventory_2_outlined),
-
-            selectedIcon: Icon(Icons.inventory_2),
-
-            label: 'Inventory',
-
-          ),
-
-          NavigationDestination(
-
-            icon: Icon(Icons.shopping_cart_outlined),
-
-            selectedIcon: Icon(Icons.shopping_cart),
-
-            label: 'Purchasing',
-
-          ),
-
-          NavigationDestination(
-
-            icon: Icon(Icons.settings_outlined),
-
-            selectedIcon: Icon(Icons.settings),
-
-            label: 'Settings',
-
-          ),
-
+          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
+          NavigationDestination(icon: Icon(Icons.inventory_2_outlined), selectedIcon: Icon(Icons.inventory_2), label: 'Inventory'),
+          NavigationDestination(icon: Icon(Icons.point_of_sale_outlined), selectedIcon: Icon(Icons.point_of_sale), label: 'Sales'),
+          NavigationDestination(icon: Icon(Icons.shopping_cart_outlined), selectedIcon: Icon(Icons.shopping_cart), label: 'Purchasing'),
+          NavigationDestination(icon: Icon(Icons.auto_awesome_outlined), selectedIcon: Icon(Icons.auto_awesome), label: 'AI Assistant'),
+          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
         ],
-
       ),
 
       floatingActionButton: FloatingActionButton.extended(
@@ -2338,6 +2315,222 @@ if (showMessage) {
         ],
       ),
     );
+  }
+
+  Future<void> _loadSalesHistory() async {
+    setState(() => _salesLoading = true);
+    try {
+      final rows = await ApiService.getSalesHistory();
+      if (mounted) setState(() { _salesHistory = rows; _salesLoading = false; });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _salesLoading = false);
+        showSnackBar('Unable to load sales: $error', isError: true);
+      }
+    }
+  }
+
+  Future<void> _addSaleCartItem() async {
+    final productId = _saleProductId;
+    final quantity = double.tryParse(_saleQuantityController.text.trim());
+    if (productId == null || quantity == null || quantity <= 0) {
+      showSnackBar('Choose a product and enter a valid quantity.', isError: true);
+      return;
+    }
+    Product? product;
+    for (final candidate in products) { if (candidate.id == productId) product = candidate; }
+    if (product == null) return;
+    final alreadyAdded = _saleCart[productId] ?? 0;
+    if (alreadyAdded + quantity > product.quantity) {
+      showSnackBar('Quantity exceeds recorded stock for ${product.name}.', isError: true);
+      return;
+    }
+    setState(() {
+      _saleCart[productId] = alreadyAdded + quantity;
+      _saleQuantityController.text = '1';
+    });
+  }
+
+  Future<void> _submitSale() async {
+    if (_saleCart.isEmpty) return;
+    setState(() => _saleSubmitting = true);
+    try {
+      final items = _saleCart.entries.map((entry) => {
+        'product_id': entry.key, 'quantity': entry.value, 'discount_amount': 0,
+      }).toList();
+      await ApiService.createSale(items: items, paymentMethod: _salePaymentMethod);
+      if (!mounted) return;
+      setState(() => _saleCart.clear());
+      await loadBackendData();
+      await _loadSalesHistory();
+      if (mounted) showSnackBar('Sale recorded and stock deducted.');
+    } catch (error) {
+      if (mounted) showSnackBar('Sale could not be recorded: $error', isError: true);
+    } finally {
+      if (mounted) setState(() => _saleSubmitting = false);
+    }
+  }
+
+  Future<void> _askInventoryAi() async {
+    final question = _aiQuestionController.text.trim();
+    if (question.isEmpty || _aiLoading) return;
+    setState(() {
+      _aiMessages.add({'role': 'user', 'text': question});
+      _aiQuestionController.clear();
+      _aiLoading = true;
+    });
+    try {
+      final response = await ApiService.getInventoryAgentAnswer(question);
+      final resultText = const JsonEncoder.withIndent('  ').convert(response['results'] ?? response);
+      if (mounted) setState(() {
+        _aiMessages.add({'role': 'assistant', 'text': resultText});
+        _aiLoading = false;
+      });
+    } catch (error) {
+      if (mounted) setState(() {
+        _aiMessages.add({'role': 'assistant', 'text': 'Analysis failed: $error'});
+        _aiLoading = false;
+      });
+    }
+  }
+
+  Widget buildSales() {
+    double cartTotal = 0;
+    for (final entry in _saleCart.entries) {
+      for (final product in products) {
+        if (product.id == entry.key) cartTotal += product.sellingPrice * entry.value;
+      }
+    }
+    return RefreshIndicator(
+      onRefresh: _loadSalesHistory,
+      child: ListView(padding: const EdgeInsets.all(20), children: [
+        const Text('Sales', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        const Text('The backend validates verified, unexpired batch stock and deducts inventory atomically.'),
+        const SizedBox(height: 16),
+        Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('New sale', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              value: _saleProductId,
+              decoration: const InputDecoration(labelText: 'Product', border: OutlineInputBorder()),
+              items: products.map((p) => DropdownMenuItem(value: p.id,
+                child: Text('${p.name} · ${p.quantity} ${p.unit}'))).toList(),
+              onChanged: (value) => setState(() => _saleProductId = value),
+            ),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(child: TextField(controller: _saleQuantityController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Quantity', border: OutlineInputBorder()))),
+              const SizedBox(width: 10),
+              FilledButton(onPressed: _addSaleCartItem, child: const Text('Add')),
+            ]),
+            if (_saleCart.isNotEmpty) ...[
+              const Divider(height: 24),
+              ..._saleCart.entries.map((entry) {
+                Product? product;
+                for (final p in products) { if (p.id == entry.key) product = p; }
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(product?.name ?? 'Product'),
+                  subtitle: Text('${entry.value} ${product?.unit ?? ''}'),
+                  trailing: IconButton(icon: const Icon(Icons.remove_circle_outline),
+                    onPressed: () => setState(() => _saleCart.remove(entry.key))),
+                );
+              }),
+              Text('Estimated bill: ₹${cartTotal.toStringAsFixed(2)}',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                value: _salePaymentMethod,
+                decoration: const InputDecoration(labelText: 'Payment method'),
+                items: const [
+                  DropdownMenuItem(value: 'cash', child: Text('Cash')),
+                  DropdownMenuItem(value: 'upi', child: Text('UPI')),
+                  DropdownMenuItem(value: 'bank_transfer', child: Text('Bank transfer')),
+                ],
+                onChanged: (value) => setState(() => _salePaymentMethod = value ?? 'cash'),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(width: double.infinity, child: FilledButton.icon(
+                onPressed: _saleSubmitting ? null : _submitSale,
+                icon: const Icon(Icons.receipt_long),
+                label: Text(_saleSubmitting ? 'Saving sale...' : 'Complete sale'),
+              )),
+            ],
+          ],
+        ))),
+        const SizedBox(height: 18),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          const Text('Recent bills', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          IconButton(onPressed: _loadSalesHistory, icon: const Icon(Icons.refresh)),
+        ]),
+        if (_salesLoading) const LinearProgressIndicator(),
+        if (!_salesLoading && _salesHistory.isEmpty) const Text('No sales recorded yet.'),
+        ..._salesHistory.map((raw) {
+          final sale = raw as Map<String, dynamic>;
+          final items = sale['items'] as List<dynamic>? ?? [];
+          final amount = (sale['total_amount'] as num?)?.toDouble() ?? 0;
+          return Card(child: ListTile(
+            leading: const Icon(Icons.receipt_long, color: Color(0xFF16845B)),
+            title: Text('₹${amount.toStringAsFixed(2)}'),
+            subtitle: Text('${items.length} item lines · ${sale['payment_method'] ?? 'payment not recorded'}'),
+            trailing: Text('#${sale['sale_id']}'),
+          ));
+        }),
+      ]),
+    );
+  }
+
+  Widget buildAiAssistant() {
+    return Column(children: [
+      const Padding(padding: EdgeInsets.fromLTRB(20, 20, 20, 8),
+        child: Align(alignment: Alignment.centerLeft, child: Text('KiranaAI Assistant',
+          style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold)))),
+      const Padding(padding: EdgeInsets.symmetric(horizontal: 20),
+        child: Align(alignment: Alignment.centerLeft,
+          child: Text('Read-only inventory, sales and purchasing insights.'))),
+      Expanded(child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _aiMessages.length,
+        itemBuilder: (context, index) {
+          final message = _aiMessages[index];
+          final isUser = message['role'] == 'user';
+          return Align(alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 700),
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: isUser ? const Color(0xFFD9EFE5) : Colors.white,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: SelectableText(message['text'] ?? ''),
+            ));
+        },
+      )),
+      if (_aiLoading) const LinearProgressIndicator(),
+      SafeArea(top: false, child: Padding(padding: const EdgeInsets.all(12),
+        child: Row(children: [
+          Expanded(child: TextField(
+            controller: _aiQuestionController, minLines: 1, maxLines: 4,
+            decoration: const InputDecoration(
+              hintText: 'Ask: Which products are low in stock?',
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (_) => _askInventoryAi(),
+          )),
+          const SizedBox(width: 8),
+          IconButton.filled(
+            onPressed: _aiLoading ? null : _askInventoryAi,
+            icon: const Icon(Icons.send),
+          ),
+        ]),
+      )),
+    ]);
   }
 
   /// Displays application settings and the live backend connection status.
