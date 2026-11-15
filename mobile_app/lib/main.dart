@@ -451,6 +451,14 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   bool isRestockLoading = false;
   String? restockError;
   bool purchasePlanApproved = false;
+  List<dynamic> _shopSuppliers = [];
+  List<dynamic> _purchaseProposals = [];
+  List<dynamic> _purchaseOrders = [];
+  int? _selectedSupplierId;
+  final TextEditingController _budgetController = TextEditingController();
+  final TextEditingController _supplierIdController = TextEditingController();
+  bool _purchasePlanningLoading = false;
+  bool _budgetSaving = false;
   final TextEditingController _saleQuantityController = TextEditingController(text: '1');
   final TextEditingController _aiQuestionController = TextEditingController();
   int? _saleProductId;
@@ -1948,6 +1956,156 @@ if (showMessage) {
   }
 
 
+  Future<void> _loadPurchasePlanningData() async {
+    if (widget.userRole != 'owner') return;
+    setState(() => _purchasePlanningLoading = true);
+    try {
+      final results = await Future.wait([
+        ApiService.getShopSuppliers(),
+        ApiService.getPurchaseProposals(),
+        ApiService.getShopPurchaseOrders(),
+        ApiService.getPurchaseBudget(),
+      ]);
+      if (!mounted) return;
+      final suppliers = results[0] as List<dynamic>;
+      final budget = results[3] as Map<String, dynamic>;
+      setState(() {
+        _shopSuppliers = suppliers;
+        _purchaseProposals = results[1] as List<dynamic>;
+        _purchaseOrders = results[2] as List<dynamic>;
+        _selectedSupplierId ??= suppliers.isNotEmpty
+            ? (suppliers.first['supplier_id'] as num).toInt() : null;
+        _budgetController.text = budget['available_amount']?.toString() ?? '0.00';
+        _purchasePlanningLoading = false;
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _purchasePlanningLoading = false);
+        showSnackBar('Purchase planning data could not be loaded: $error', isError: true);
+      }
+    }
+  }
+
+  Future<void> _savePurchaseBudget() async {
+    final amount = double.tryParse(_budgetController.text.trim());
+    if (amount == null || amount < 0) {
+      showSnackBar('Enter a valid non-negative INR budget.', isError: true);
+      return;
+    }
+    setState(() => _budgetSaving = true);
+    try {
+      await ApiService.setPurchaseBudget(amount);
+      await _loadPurchasePlanningData();
+      if (mounted) showSnackBar('Purchase budget saved.');
+    } catch (error) {
+      if (mounted) showSnackBar('Budget update failed: $error', isError: true);
+    } finally {
+      if (mounted) setState(() => _budgetSaving = false);
+    }
+  }
+
+  Future<void> _connectSupplierById() async {
+    final id = int.tryParse(_supplierIdController.text.trim());
+    if (id == null || id <= 0) {
+      showSnackBar('Enter a valid supplier ID.', isError: true);
+      return;
+    }
+    try {
+      await ApiService.connectSupplier(id);
+      _supplierIdController.clear();
+      await _loadPurchasePlanningData();
+      if (mounted) showSnackBar('Supplier connected to this shop.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not connect supplier: $error', isError: true);
+    }
+  }
+
+  Future<void> _createPurchaseProposal() async {
+    if (widget.userRole != 'owner' || selectedRestockProducts.isEmpty) return;
+    if (_selectedSupplierId == null) {
+      showSnackBar('Connect and select a supplier before creating a proposal.', isError: true);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Create purchase proposal?'),
+        content: Text('Create a proposal for ${selectedRestockProducts.length} selected product(s), estimated at ₹${_selectedPurchaseTotal().toStringAsFixed(2)}. This does not place an order.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Create proposal')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final items = <Map<String, dynamic>>[];
+      for (final recommendation in restockRecommendations) {
+        final id = (recommendation['product_id'] as num?)?.toInt();
+        if (id == null || !selectedRestockProducts.contains(id)) continue;
+        final product = _productForRecommendation(recommendation);
+        if (product == null) continue;
+        final quantity = _recommendationNumber(
+          recommendation['suggested_quantity'] ?? recommendation['suggested_reorder_quantity'],
+        );
+        if (quantity > 0) items.add({
+          'product_id': id,
+          'quantity': quantity,
+          'unit_price': product.purchasePrice,
+        });
+      }
+      if (items.isEmpty) throw Exception('No valid recommendation items selected.');
+      await ApiService.createPurchaseProposal(
+        supplierId: _selectedSupplierId,
+        items: items,
+        rationale: 'Created from KiranaAI reorder recommendations.',
+      );
+      if (!mounted) return;
+      setState(() => selectedRestockProducts.clear());
+      await _loadPurchasePlanningData();
+      showSnackBar('Proposal created. Owner approval is still required.');
+    } catch (error) {
+      if (mounted) showSnackBar('Proposal creation failed: $error', isError: true);
+    }
+  }
+
+  Future<void> _decideProposal(int proposalId, bool approve) async {
+    try {
+      await ApiService.decidePurchaseProposal(proposalId, approve: approve);
+      await _loadPurchasePlanningData();
+      if (mounted) showSnackBar(approve ? 'Proposal approved. No order has been placed yet.' : 'Proposal rejected.');
+    } catch (error) {
+      if (mounted) showSnackBar('Decision failed: $error', isError: true);
+    }
+  }
+
+  Future<void> _executeProposal(int proposalId) async {
+    try {
+      final result = await ApiService.executePurchaseProposal(proposalId);
+      await _loadPurchasePlanningData();
+      if (mounted) showSnackBar('Internal PO ${result['purchase_order_number'] ?? result['purchase_id']} created. It has not been sent externally.');
+    } catch (error) {
+      if (mounted) showSnackBar('PO creation failed: $error', isError: true);
+    }
+  }
+
+  Future<void> _receivePurchaseOrder(Map<String, dynamic> order) async {
+    final items = (order['items'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    final receipt = await showDialog<List<Map<String, dynamic>>>(
+      context: context,
+      builder: (dialogContext) => ReceivePurchaseDialog(items: items, products: products),
+    );
+    if (receipt == null) return;
+    try {
+      await ApiService.receivePurchaseOrder((order['purchase_id'] as num).toInt(), receipt);
+      await _loadPurchasePlanningData();
+      await loadBackendData();
+      if (mounted) showSnackBar('Goods receipt saved. Batches require verification before sale.');
+    } catch (error) {
+      if (mounted) showSnackBar('Goods receipt failed: $error', isError: true);
+    }
+  }
+
   /// Loads backend-generated replenishment recommendations.
   /// Method: GET /inventory/restock-recommendations?days=30&warning_days=7.
   Future<void> loadRestockRecommendations() async {
@@ -1975,6 +2133,7 @@ if (showMessage) {
         );
         isRestockLoading = false;
       });
+      await _loadPurchasePlanningData();
     } catch (error) {
       if (!mounted) return;
       setState(() {
