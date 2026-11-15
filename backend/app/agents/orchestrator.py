@@ -5,6 +5,7 @@ SUPPORTED = {
     "inventory": ("stock", "inventory", "expiry", "dead stock", "low stock"),
     "sales": ("sales", "revenue", "best selling", "top selling"),
     "forecast": ("forecast", "demand", "next month", "next 30 days"),
+    "stockout": ("stockout", "run out", "running out", "stock-out"),
     "reorder": ("reorder", "restock", "what should i buy", "purchase recommendation"),
     "supplier": ("supplier", "distributor"),
     "budget": ("budget", "cash available", "purchase budget"),
