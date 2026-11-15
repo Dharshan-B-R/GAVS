@@ -58,7 +58,9 @@ for module_name in model_modules:
 with patch.object(Base.metadata, "create_all"):
     from main import app
 
-# This schema operation targets kiranaai_test only.
+# Rebuild only the explicitly named test database so its schema always matches
+# current models. Never run drop_all against the application database.
+Base.metadata.drop_all(bind=test_engine)
 Base.metadata.create_all(bind=test_engine)
 
 
