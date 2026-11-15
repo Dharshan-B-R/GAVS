@@ -475,4 +475,4 @@ def format_inventory_answer(
                 f"verified: {row.get('is_verified')}."
             )
 
-    return "\\n".join(lines)
+    return "\n".join(lines)
