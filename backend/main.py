@@ -2005,6 +2005,7 @@ def create_sale(
                 quantity_before=quantity_before,
                 quantity_after=product.quantity,
                 reason="FEFO sale from verified batches",
+                performed_by=current_user.id,
                 reference_type="sale",
                 reference_id=sale.id
             )
