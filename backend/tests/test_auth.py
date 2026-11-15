@@ -292,6 +292,30 @@ def test_login_rejects_inactive_account(client, db_session):
     assert response.json()["detail"] == "Account is inactive"
 
 
+# Authenticated shop membership endpoint
+
+def test_my_shops_returns_only_active_memberships(client):
+    registration = client.post("/auth/register/owner", json=owner_payload())
+    token = registration.json()["access_token"]
+
+    response = client.get(
+        "/auth/shops",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [{
+        "shop_id": registration.json()["shop"]["id"],
+        "name": "Test Kirana Shop",
+        "address": "Bengaluru",
+        "role": "Owner",
+    }]
+
+
+def test_my_shops_requires_authentication(client):
+    response = client.get("/auth/shops")
+    assert response.status_code == 401
+
 # Authenticated account endpoint
 
 def test_account_endpoint_rejects_missing_token(client):
