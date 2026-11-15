@@ -1,4 +1,4 @@
-"""Owner-only read-only endpoints for KiranaAI planning agents."""
+"""Shop-staff read-only endpoints for KiranaAI planning agents."""
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
