@@ -89,7 +89,16 @@ class ApiService {
       }
 
       await _secureStorage.write(key: _tokenKey, value: token);
-      await refreshMyShops();
+      try {
+        final shops = await refreshMyShops();
+        if (shops.isEmpty) {
+          await logout();
+          throw Exception('This account is not linked to an active shop.');
+        }
+      } catch (_) {
+        await logout();
+        rethrow;
+      }
 
       return responseData;
     }
@@ -173,6 +182,18 @@ class ApiService {
       throw Exception('You do not have access to the selected shop.');
     }
     await _secureStorage.write(key: _activeShopKey, value: shopId.toString());
+  }
+
+  /// Returns the active shop membership stored for this session.
+  static Future<Map<String, dynamic>?> getActiveShop() async {
+    final shopId = await _secureStorage.read(key: _activeShopKey);
+    if (shopId == null) return null;
+    final shops = await getMyShops();
+    for (final shop in shops) {
+      if (shop['shop_id'].toString() == shopId) return shop;
+    }
+    await _secureStorage.delete(key: _activeShopKey);
+    return null;
   }
 
   static Future<int> _requireActiveShopId() async {
