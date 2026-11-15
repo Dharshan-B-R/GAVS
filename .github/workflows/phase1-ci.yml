@@ -25,7 +25,7 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kiranaai
-      SECRET_KEY: ci-only-secret-key-change-me
+      JWT_SECRET_KEY: ci-only-secret-key-change-me-which-is-long-enough-123456789
       GEMINI_API_KEY: ci-placeholder
     steps:
       - uses: actions/checkout@v4
