@@ -95,7 +95,7 @@ app = FastAPI(
 # Purpose: Register authentication endpoints.
 # ==========================================
 
-from app.auth.routes import router as auth_router, require_shop_staff, get_current_user
+from app.auth.routes import router as auth_router, require_shop_staff, require_shop_owner, get_current_user
 
 app.include_router(auth_router)
 
