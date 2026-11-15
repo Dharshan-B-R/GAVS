@@ -369,3 +369,61 @@ def test_owner_can_suspend_and_reactivate_employee_membership(client):
         headers=auth(employee_login.json()["access_token"]),
     )
     assert len(employee_shops.json()) == 1
+
+
+
+def test_stock_adjustment_creates_batch_and_requires_verification(client, db_session):
+    owner = register_owner(client, "adjustment-owner@example.com")
+    shop_id = owner["shop"]["id"]
+    product = Product(
+        shop_id=shop_id, name="Tea", quantity=0, minimum_stock=1,
+        purchase_price=200, selling_price=240, unit="kg", is_active=True,
+    )
+    db_session.add(product)
+    db_session.flush()
+
+    missing_batch = client.post(
+        f"/shops/{shop_id}/inventory/adjustments",
+        headers=auth(owner["access_token"]),
+        json={"product_id": product.id, "quantity_change": 3, "reason": "Opening stock"},
+    )
+    assert missing_batch.status_code == 422
+
+    added = client.post(
+        f"/shops/{shop_id}/inventory/adjustments",
+        headers=auth(owner["access_token"]),
+        json={
+            "product_id": product.id,
+            "quantity_change": 3,
+            "reason": "Opening stock",
+            "batch_number": "TEA-OPEN-001",
+            "expiry_date": "2027-12-31",
+        },
+    )
+    assert added.status_code == 201, added.text
+    db_session.refresh(product)
+    batch = db_session.query(ProductBatch).filter_by(product_id=product.id).one()
+    assert product.quantity == 3
+    assert batch.quantity == 3
+    assert batch.is_verified is False
+
+    verified = client.post(
+        f"/product-batches/{batch.id}/verify",
+        params={"shop_id": shop_id},
+        headers=auth(owner["access_token"]),
+        json={"verified_quantity": 3, "reason": "Physical count"},
+    )
+    assert verified.status_code == 200, verified.text
+    db_session.refresh(batch)
+    assert batch.is_verified is True
+
+    reduced = client.post(
+        f"/shops/{shop_id}/inventory/adjustments",
+        headers=auth(owner["access_token"]),
+        json={"product_id": product.id, "quantity_change": -1, "reason": "Wastage"},
+    )
+    assert reduced.status_code == 201
+    db_session.refresh(product)
+    db_session.refresh(batch)
+    assert product.quantity == 2
+    assert batch.quantity == 2
