@@ -14,6 +14,7 @@ from app.services.inventory_intelligence_service import (
     analyze_inventory,
     get_low_stock,
     get_stock_coverage,
+    get_dead_stock,
 )
 
 
@@ -104,3 +105,30 @@ def test_unknown_inventory_intent_is_rejected(db_session):
 def test_stock_coverage_rejects_invalid_analysis_period(db_session, days):
     with pytest.raises(ValueError, match="days must be between"):
         get_stock_coverage(db_session, days=days)
+
+
+def test_dead_stock_requires_mature_stock_and_no_recent_sales(db_session):
+    old_unsold = _product(db_session, name="Old unsold", quantity=12)
+    old_sold = _product(db_session, name="Old sold", quantity=8)
+    new_unsold = _product(
+        db_session, name="New unsold", quantity=15,
+        created_at=datetime.now(timezone.utc) - timedelta(days=10),
+    )
+    db_session.add(StockMovement(
+        product_id=old_sold.id, movement_type="sale",
+        quantity_change=-2, quantity_before=10, quantity_after=8,
+        created_at=datetime.now(timezone.utc) - timedelta(days=5),
+    ))
+    db_session.flush()
+
+    result = get_dead_stock(db_session, days=90, shop_id=1)
+
+    assert [p["product_name"] for p in result["products"]] == ["Old unsold"]
+    assert result["products"][0]["estimated_stock_value"] == 240
+
+
+def test_dead_stock_is_shop_scoped(db_session):
+    own = _product(db_session, name="Own dead stock", quantity=5)
+    other = _product(db_session, name="Other dead stock", quantity=9, shop_id=2)
+    result = get_dead_stock(db_session, days=90, shop_id=1)
+    assert {p["product_id"] for p in result["products"]} == {own.id}
