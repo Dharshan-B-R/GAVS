@@ -217,9 +217,14 @@ def update_product(
 @app.delete("/products/{product_id}")
 def delete_product(
     product_id: int,
-    db: Session = Depends(get_db)
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
 ):
-    product = db.query(Product).filter(Product.id == product_id).first()
+    product = db.query(Product).filter(
+        Product.id == product_id,
+        Product.shop_id == shop_id,
+    ).first()
 
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
