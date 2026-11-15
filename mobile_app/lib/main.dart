@@ -3018,7 +3018,7 @@ class _AddProductDialogState extends State<AddProductDialog> {
       'category': _categoryController.text.trim().isEmpty
           ? null
           : _categoryController.text.trim(),
-      'quantity': double.parse(_quantityController.text.trim()),
+      'quantity': 0,
       'minimum_stock': double.parse(_minimumController.text.trim()),
       'purchase_price': double.parse(_purchaseController.text.trim()),
       'selling_price': double.parse(_sellingController.text.trim()),
@@ -3086,10 +3086,12 @@ class _AddProductDialogState extends State<AddProductDialog> {
                   isRequired: true,
                 ),
                 _buildFormField(_categoryController, 'Category'),
-                _buildFormField(
-                  _quantityController,
-                  'Quantity',
-                  number: true,
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    'Products start with zero stock. Add opening stock later with a batch number and expiry date.',
+                    style: TextStyle(color: Colors.black54),
+                  ),
                 ),
                 _buildFormField(
                   _minimumController,
