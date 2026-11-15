@@ -61,50 +61,115 @@ class AuthGate extends StatefulWidget {
 
 class _AuthGateState extends State<AuthGate> {
   bool _checking = true;
-  bool _signedIn = false;
+  Map<String, dynamic>? _user;
+  Map<String, dynamic>? _activeShop;
   String? _error;
 
   @override
-  void initState() {
-    super.initState();
-    _restoreSession();
+  void initState() { super.initState(); _restoreSession(); }
+
+  Future<void> _loadIdentity() async {
+    final user = await ApiService.getCurrentUser();
+    final role = (user['role'] ?? '').toString().toLowerCase();
+    Map<String, dynamic>? shop;
+    if (role == 'owner' || role == 'employee') {
+      final shops = await ApiService.refreshMyShops();
+      if (shops.isEmpty) throw Exception('Your account has no active shop membership.');
+      shop = await ApiService.getActiveShop();
+      if (shop == null) throw Exception('No active shop is selected for this account.');
+    } else if (role != 'supplier' && role != 'admin') {
+      throw Exception('This account role is not supported by the app.');
+    }
+    if (mounted) setState(() { _user = user; _activeShop = shop; });
   }
 
   Future<void> _restoreSession() async {
     try {
-      if (await ApiService.hasAccessToken()) {
-        final shops = await ApiService.refreshMyShops();
-        if (shops.isNotEmpty) {
-          if (mounted) setState(() => _signedIn = true);
-        } else {
-          await ApiService.logout();
-        }
-      }
+      if (await ApiService.hasAccessToken()) await _loadIdentity();
     } catch (error) {
       await ApiService.logout();
-      _error = error.toString();
+      _error = error.toString().replaceFirst('Exception: ', '');
     } finally {
       if (mounted) setState(() => _checking = false);
     }
   }
 
-  void _onLogin() => setState(() { _signedIn = true; _error = null; });
+  Future<void> _onLogin() async {
+    try {
+      await _loadIdentity();
+      if (mounted) setState(() => _error = null);
+    } catch (error) {
+      await ApiService.logout();
+      if (mounted) setState(() {
+        _user = null;
+        _activeShop = null;
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
 
   Future<void> _onLogout() async {
     await ApiService.logout();
-    if (mounted) setState(() => _signedIn = false);
+    if (mounted) setState(() { _user = null; _activeShop = null; });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_checking) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_checking) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_user == null) return LoginScreen(onLogin: _onLogin, initialError: _error);
+
+    final role = (_user!['role'] ?? '').toString().toLowerCase();
+    final identity = (_user!['full_name'] ?? _user!['email']).toString();
+    if (role == 'supplier') {
+      return RoleLandingScreen(title: 'Distributor workspace',
+        subtitle: 'Signed in as ' + identity,
+        description: 'Your distributor account is authenticated. Supplier catalogue, shop connections and order fulfilment will appear here.',
+        onLogout: _onLogout);
     }
-    if (!_signedIn) {
-      return LoginScreen(onLogin: _onLogin, initialError: _error);
+    if (role == 'admin') {
+      return RoleLandingScreen(title: 'Administration',
+        subtitle: 'Signed in as ' + identity,
+        description: 'Administrator access is separate from shop-owner access. Admin tools will be enabled here.',
+        onLogout: _onLogout);
     }
-    return KiranaHomePage(onLogout: _onLogout);
+    return KiranaHomePage(userRole: role,
+      shopName: (_activeShop?['name'] ?? 'My shop').toString(),
+      onLogout: _onLogout);
   }
+}
+
+class RoleLandingScreen extends StatelessWidget {
+  const RoleLandingScreen({super.key, required this.title, required this.subtitle,
+    required this.description, required this.onLogout});
+  final String title;
+  final String subtitle;
+  final String description;
+  final Future<void> Function() onLogout;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(title), actions: [
+      IconButton(tooltip: 'Sign out', onPressed: onLogout, icon: const Icon(Icons.logout)),
+    ]),
+    body: Center(child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 520),
+      child: Card(margin: const EdgeInsets.all(24), child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.verified_user_outlined, size: 52, color: Color(0xFF16845B)),
+          const SizedBox(height: 16),
+          Text(title, style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          Text(subtitle, textAlign: TextAlign.center),
+          const SizedBox(height: 18),
+          Text(description, textAlign: TextAlign.center),
+          const SizedBox(height: 20),
+          const Text('Role-based session active',
+            style: TextStyle(color: Color(0xFF16845B), fontWeight: FontWeight.w600)),
+        ]),
+      )),
+    )),
+  );
 }
 
 class LoginScreen extends StatefulWidget {
@@ -316,9 +381,11 @@ class Product {
 
 class KiranaHomePage extends StatefulWidget {
 
-  const KiranaHomePage({super.key, required this.onLogout});
+  const KiranaHomePage({super.key, required this.onLogout, required this.userRole, required this.shopName});
 
   final Future<void> Function() onLogout;
+  final String userRole;
+  final String shopName;
 
 
 
@@ -2191,13 +2258,13 @@ if (showMessage) {
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton.icon(
-                        onPressed:
-                            selectedCount == 0 ? null : _approvePurchasePlan,
+                        onPressed: widget.userRole != 'owner' || selectedCount == 0
+                            ? null : _approvePurchasePlan,
                         icon: const Icon(Icons.verified_outlined),
                         label: const Text('Review and approve plan'),
                       ),
                     ),
-                    if (purchasePlanApproved)
+                    if (widget.userRole == 'owner' && purchasePlanApproved)
                       const Padding(
                         padding: EdgeInsets.only(top: 10),
                         child: Text(
@@ -2209,7 +2276,7 @@ if (showMessage) {
                         ),
                       ),
                     const SizedBox(height: 8),
-                    const Text(
+                    if (widget.userRole == 'owner') const Text(
                       'KiranaAI does not place orders or contact suppliers. '
                       'Owner approval here confirms the plan only.',
                       style: TextStyle(color: Colors.black54),
@@ -2303,9 +2370,9 @@ if (showMessage) {
 
             leading: Icon(Icons.store),
 
-            title: Text('Shop Profile'),
+            title: Text(widget.shopName),
 
-            subtitle: Text('KiranaAI Demo Shop'),
+            subtitle: Text('Signed in as ' + widget.userRole),
 
           ),
 
