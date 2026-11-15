@@ -578,6 +578,16 @@ class ApiService {
       body: {'is_active': active});
   }
 
+  static Future<Map<String, dynamic>> createOpeningBatch({
+    required int productId,
+    required String batchNumber,
+    required String expiryDate,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/products/$productId/opening-batch',
+      body: {'batch_number': batchNumber, 'expiry_date': expiryDate});
+  }
+
   static Future<List<dynamic>> getInventoryBatches() async {
     final shopId = await _requireActiveShopId();
     return _requestList('/shops/$shopId/inventory/batches');
