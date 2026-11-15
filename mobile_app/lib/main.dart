@@ -97,32 +97,45 @@ class _AuthGateState extends State<AuthGate> {
   Future<void> _onLogin() async {
     try {
       await _loadIdentity();
-      if (mounted) setState(() => _error = null);
+      if (mounted) {
+        setState(() => _error = null);
+      }
     } catch (error) {
       await ApiService.logout();
-      if (mounted) setState(() {
-        _user = null;
-        _activeShop = null;
-        _error = error.toString().replaceFirst('Exception: ', '');
-      });
+      if (mounted) {
+        setState(() {
+          _user = null;
+          _activeShop = null;
+          _error = error.toString().replaceFirst('Exception: ', '');
+        });
+      }
     }
   }
 
   Future<void> _onLogout() async {
     await ApiService.logout();
-    if (mounted) setState(() { _user = null; _activeShop = null; });
+    if (mounted) {
+      setState(() {
+        _user = null;
+        _activeShop = null;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_checking) return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    if (_user == null) return LoginScreen(onLogin: _onLogin, initialError: _error);
+    if (_checking) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_user == null) {
+      return LoginScreen(onLogin: _onLogin, initialError: _error);
+    }
 
     final role = (_user!['role'] ?? '').toString().toLowerCase();
     final identity = (_user!['full_name'] ?? _user!['email']).toString();
     if (role == 'supplier') {
       return RoleLandingScreen(title: 'Distributor workspace',
-        subtitle: 'Signed in as ' + identity,
+        subtitle: 'Signed in as $identity',
         description: 'Your distributor account is authenticated. Supplier catalogue, shop connections and order fulfilment will appear here.',
         onLogout: _onLogout);
     }
@@ -2364,15 +2377,15 @@ if (showMessage) {
           ),
         ),
 
-        const Card(
+        Card(
 
           child: ListTile(
 
-            leading: Icon(Icons.store),
+            leading: const Icon(Icons.store),
 
             title: Text(widget.shopName),
 
-            subtitle: Text('Signed in as ' + widget.userRole),
+            subtitle: Text('Signed in as ${widget.userRole}'),
 
           ),
 
