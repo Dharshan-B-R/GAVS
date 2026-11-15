@@ -262,3 +262,39 @@ def test_owner_approval_purchase_order_supplier_confirmation_and_receipt(client,
     db_session.refresh(purchase)
     assert product.quantity == 5
     assert purchase.status == "received"
+
+
+
+def test_shop_staff_can_record_sale_and_stock_is_deducted_from_verified_batch(client, db_session):
+    owner = register_owner(client, "sales-owner@example.com")
+    shop_id = owner["shop"]["id"]
+    product = Product(
+        shop_id=shop_id, name="Sugar", quantity=10, minimum_stock=2,
+        purchase_price=35, selling_price=45, unit="kg", is_active=True,
+    )
+    db_session.add(product)
+    db_session.flush()
+    batch = ProductBatch(
+        product_id=product.id, batch_number="SUGAR-001",
+        expiry_date=__import__("datetime").date(2027, 12, 31),
+        quantity=10, purchase_price=35, is_verified=True,
+    )
+    db_session.add(batch)
+    db_session.flush()
+
+    response = client.post(
+        "/sales",
+        params={"shop_id": shop_id},
+        headers=auth(owner["access_token"]),
+        json={
+            "items": [{"product_id": product.id, "quantity": 2, "discount_amount": 0}],
+            "discount_amount": 0,
+            "payment_method": "cash",
+        },
+    )
+    assert response.status_code == 200, response.text
+    db_session.refresh(product)
+    db_session.refresh(batch)
+    assert product.quantity == 8
+    assert batch.quantity == 8
+    assert response.json()["total_amount"] == 90
