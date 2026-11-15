@@ -123,13 +123,19 @@ def get_purchase_budget(
     budget = db.query(ShopPurchaseBudget).filter(
         ShopPurchaseBudget.shop_id == shop_id
     ).first()
-    if budget is None:
-        return {"shop_id": shop_id, "available_amount": "0.00", "currency": "INR"}
+    available = Decimal("0.00") if budget is None else Decimal(budget.available_amount)
+    committed_rows = db.query(PurchaseProposal.total_amount).filter(
+        PurchaseProposal.shop_id == shop_id,
+        PurchaseProposal.status.in_(["approved", "ordered"]),
+    ).all()
+    committed = sum((Decimal(row[0]) for row in committed_rows), Decimal("0.00"))
     return {
         "shop_id": shop_id,
-        "available_amount": str(budget.available_amount),
-        "currency": budget.currency,
-        "updated_at": budget.updated_at,
+        "available_amount": str(available),
+        "committed_amount": str(committed),
+        "remaining_amount": str(max(available - committed, Decimal("0.00"))),
+        "currency": "INR" if budget is None else budget.currency,
+        "updated_at": None if budget is None else budget.updated_at,
     }
 
 
