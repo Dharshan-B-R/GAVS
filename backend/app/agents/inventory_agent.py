@@ -156,7 +156,8 @@ def extract_result_limit(question: str) -> int:
     Extract a requested number of products from ranking-style questions.
 
     The default is ten and the upper bound protects downstream queries from
-    unexpectedly large result sets.
+    unexpectedly large result sets. "Show me 7 ..." is treated as an explicit
+    request for seven results, just like "top 7 ...".
     """
     match = re.search(
         r"\b(?:top|first|show me)\s+(\d+)\b",
@@ -196,6 +197,8 @@ def detect_fast_inventory_intent(
             r"\bnon[- ]moving\s+(?:stock|products?|items?)\b",
             r"\bunsold\s+(?:stock|products?|items?)\b",
             r"\bproducts?\s+with\s+no\s+sales\b",
+            r"\bproducts?\s+(?:have|has)\s+no\s+sales\b",
+            r"\bno\s+sales\s+for\s+(?:these\s+)?products?\b",
             r"\b(?:stock|products?)\s+not\s+selling\b",
         ],
         "fast_moving": [
@@ -209,7 +212,7 @@ def detect_fast_inventory_intent(
             r"\bslow[- ]moving\b",
             r"\bslow\s+selling\b",
             r"\bpoor[- ]selling\b",
-            r"\bproducts?\s+selling\s+slow(?:ly)?\b",
+            r"\bproducts?\s+(?:are\s+)?selling\s+slow(?:ly)?\b",
         ],
         "stock_coverage": [
             r"\bstock\s+coverage\b",
@@ -229,7 +232,8 @@ def detect_fast_inventory_intent(
         "data_readiness": [
             r"\bdata\s+readiness\b",
             r"\benough\s+sales\s+data\b",
-            r"\bsales\s+data\s+available\b",
+            r"\bsales\s+data\s+(?:available|enough|sufficient)\b",
+            r"\b(?:is|are)\s+(?:my\s+)?sales\s+data\s+(?:enough|sufficient)\b",
             r"\bcan\s+i\s+(?:forecast|predict)\b",
             r"\bforecast(?:ing)?\s+readiness\b",
         ],
