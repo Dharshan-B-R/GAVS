@@ -18,7 +18,7 @@ class Purchase(Base):
 
     id = Column(Integer, primary_key=True, index=True)\n\n    shop_id = Column(Integer, ForeignKey("shops.id", ondelete="RESTRICT"), nullable=False, index=True)
 
-    supplier_id = Column(
+    proposal_id = Column(\n        Integer, ForeignKey("purchase_proposals.id", ondelete="RESTRICT"),\n        nullable=True, unique=True, index=True\n    )\n\n    status = Column(String(20), nullable=False, default="received", server_default="received")\n\n    supplier_id = Column(
         Integer,
         ForeignKey("suppliers.id"),
         nullable=False,
