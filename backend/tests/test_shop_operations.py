@@ -298,3 +298,26 @@ def test_shop_staff_can_record_sale_and_stock_is_deducted_from_verified_batch(cl
     assert product.quantity == 8
     assert batch.quantity == 8
     assert response.json()["total_amount"] == 90
+
+
+
+def test_legacy_unscoped_data_endpoints_are_disabled(client):
+    assert client.get("/inventory/expiry-intelligence").status_code == 410
+    assert client.get("/analytics/sales/summary").status_code == 410
+    assert client.get("/suppliers").status_code == 410
+    assert client.get("/stock-movements").status_code == 410
+
+
+def test_supplier_cannot_access_shop_owner_purchase_budget(client):
+    owner = register_owner(client, "supplier-denied-owner@example.com")
+    supplier = client.post("/auth/register/distributor", json={
+        "full_name": "Supplier Account",
+        "email": "supplier-denied@example.com",
+        "password": "SupplierPass@123",
+        "business_name": "Supplier Denied Ltd",
+    })
+    response = client.get(
+        f"/shops/{owner['shop']['id']}/purchase-budget",
+        headers=auth(supplier.json()["access_token"]),
+    )
+    assert response.status_code == 403
