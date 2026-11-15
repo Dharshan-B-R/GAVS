@@ -6757,6 +6757,8 @@ def get_fast_moving_products(
 @app.get("/analytics/sales/summary")
 def get_sales_analytics_summary(
     days: int = 30,
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
     db: Session = Depends(get_db)
 ):
     try:
@@ -6778,6 +6780,7 @@ def get_sales_analytics_summary(
                 func.sum(Sale.total_amount), 0
             ).label("total_revenue")
         ).filter(
+            Sale.shop_id == shop_id,
             Sale.created_at >= start_date,
             Sale.created_at <= end_date
         ).first()
@@ -6791,6 +6794,7 @@ def get_sales_analytics_summary(
             Sale,
             Sale.id == SaleItem.sale_id
         ).filter(
+            Sale.shop_id == shop_id,
             Sale.created_at >= start_date,
             Sale.created_at <= end_date
         ).scalar()
@@ -6851,6 +6855,8 @@ def get_sales_analytics_summary(
 @app.get("/analytics/sales/daily")
 def get_daily_sales_analytics(
     days: int = 7,
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
     db: Session = Depends(get_db)
 ):
     try:
@@ -6867,6 +6873,7 @@ def get_daily_sales_analytics(
 
         # Fetch sales within the selected period
         sales = db.query(Sale).filter(
+            Sale.shop_id == shop_id,
             Sale.created_at >= start_date,
             Sale.created_at <= end_date
         ).order_by(
@@ -6955,6 +6962,8 @@ def get_daily_sales_analytics(
 def get_product_sales_analytics(
     days: int = 30,
     limit: int = 10,
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
     db: Session = Depends(get_db)
 ):
     try:
@@ -6998,6 +7007,7 @@ def get_product_sales_analytics(
             Sale,
             Sale.id == SaleItem.sale_id
         ).filter(
+            Sale.shop_id == shop_id,
             Sale.created_at >= start_date,
             Sale.created_at <= end_date
         ).group_by(
