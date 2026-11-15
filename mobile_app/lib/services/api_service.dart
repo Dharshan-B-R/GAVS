@@ -467,11 +467,23 @@ class ApiService {
       body: {'available_amount': amount, 'currency': 'INR'});
   }
 
-  static Future<Map<String, dynamic>> registerOwner(Map<String, dynamic> payload) async =>
-      _requestJson('POST', '/auth/register/owner', body: payload);
+  static Future<Map<String, dynamic>> registerOwner(Map<String, dynamic> payload) async {
+    final result = await _requestJson('POST', '/auth/register/owner', body: payload);
+    final token = result['access_token']?.toString();
+    if (token != null && token.isNotEmpty) {
+      await _secureStorage.write(key: _tokenKey, value: token);
+    }
+    return result;
+  }
 
-  static Future<Map<String, dynamic>> registerSupplier(Map<String, dynamic> payload) async =>
-      _requestJson('POST', '/auth/register/distributor', body: payload);
+  static Future<Map<String, dynamic>> registerSupplier(Map<String, dynamic> payload) async {
+    final result = await _requestJson('POST', '/auth/register/distributor', body: payload);
+    final token = result['access_token']?.toString();
+    if (token != null && token.isNotEmpty) {
+      await _secureStorage.write(key: _tokenKey, value: token);
+    }
+    return result;
+  }
 
   static Future<List<dynamic>> getDistributorDirectory() async {
     final shopId = await _requireActiveShopId();
