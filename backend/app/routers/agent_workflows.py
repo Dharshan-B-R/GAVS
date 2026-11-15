@@ -106,6 +106,8 @@ def orchestrate_question(
             results["forecast"] = forecast_demand(db, shop_id=shop_id)
         elif agent == "stockout":
             results["stockout"] = predict_stockout_risk(db, shop_id=shop_id)
+        elif agent == "seasonal":
+            results["seasonal"] = analyze_seasonal_demand(db, shop_id=shop_id)
         elif agent == "reorder":
             results["reorder"] = build_reorder_recommendations(db, shop_id=shop_id)
         elif agent == "supplier":
