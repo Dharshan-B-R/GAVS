@@ -75,8 +75,44 @@ def orchestrate_question(
             from app.models.shop_purchase_budget import ShopPurchaseBudget
             budget = db.query(ShopPurchaseBudget).filter(ShopPurchaseBudget.shop_id == shop_id).first()
             results["budget"] = {"available_amount": str(budget.available_amount), "currency": budget.currency} if budget else {"available_amount": "0.00", "currency": "INR", "configured": False}
-        elif agent in {"sales", "approval"}:
-            results[agent] = {"status": "not_connected", "message": "This specialist workflow is not yet exposed through the orchestrator."}
+        elif agent == "sales":
+            from app.agents.sales_analytics_agent import understand_sales_question, format_sales_answer
+            from app.services.sales_intelligence_service import analyze_sales
+            sales_intent = understand_sales_question(question)
+            if sales_intent.intent == "unknown":
+                results["sales"] = {
+                    "intent": "unknown",
+                    "answer": sales_intent.clarification or
+                              "Ask about sales summary, daily sales, or best-selling products.",
+                    "analytics_data": None,
+                }
+            else:
+                sales_data = analyze_sales(
+                    db=db, shop_id=shop_id, intent=sales_intent.intent,
+                    days=sales_intent.days, limit=sales_intent.limit,
+                )
+                results["sales"] = {
+                    "intent": sales_intent.intent,
+                    "answer": format_sales_answer(
+                        question=question, intent=sales_intent.intent,
+                        analytics_data=sales_data,
+                    ),
+                    "analytics_data": sales_data,
+                }
+        elif agent == "approval":
+            from app.models.purchase_proposal import PurchaseProposal
+            pending = db.query(PurchaseProposal).filter(
+                PurchaseProposal.shop_id == shop_id,
+                PurchaseProposal.status == "pending",
+            ).order_by(PurchaseProposal.created_at.desc()).limit(20).all()
+            results["approval"] = {
+                "pending_count": len(pending),
+                "proposals": [
+                    {"proposal_id": p.id, "total_amount": str(p.total_amount),
+                     "items": p.items, "created_at": p.created_at}
+                    for p in pending
+                ],
+            }
     return {"plan": plan, "results": results,
             "safety": {"read_only": True, "purchase_orders_created": False,
                        "owner_approval_required": True}}
