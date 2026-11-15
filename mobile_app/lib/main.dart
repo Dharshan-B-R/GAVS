@@ -136,10 +136,7 @@ class _AuthGateState extends State<AuthGate> {
     final role = (_user!['role'] ?? '').toString().toLowerCase();
     final identity = (_user!['full_name'] ?? _user!['email']).toString();
     if (role == 'supplier') {
-      return RoleLandingScreen(title: 'Distributor workspace',
-        subtitle: 'Signed in as $identity',
-        description: 'Your distributor account is authenticated. Supplier catalogue, shop connections and order fulfilment will appear here.',
-        onLogout: _onLogout);
+      return SupplierHomePage(onLogout: _onLogout, identity: identity);
     }
     if (role == 'admin') {
       return RoleLandingScreen(title: 'Administration',
@@ -3464,6 +3461,122 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(onPressed: _submit, child: const Text('Confirm receipt')),
       ],
+    );
+  }
+}
+
+
+
+class SupplierHomePage extends StatefulWidget {
+  const SupplierHomePage({super.key, required this.onLogout, required this.identity});
+  final Future<void> Function() onLogout;
+  final String identity;
+
+  @override
+  State<SupplierHomePage> createState() => _SupplierHomePageState();
+}
+
+class _SupplierHomePageState extends State<SupplierHomePage> {
+  List<dynamic> _orders = [];
+  Map<String, dynamic>? _profile;
+  bool _loading = true;
+  String? _error;
+  final Set<int> _confirming = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final values = await Future.wait([
+        ApiService.getSupplierProfile(),
+        ApiService.getSupplierOrders(),
+      ]);
+      if (mounted) setState(() {
+        _profile = values[0] as Map<String, dynamic>;
+        _orders = values[1] as List<dynamic>;
+        _loading = false;
+      });
+    } catch (error) {
+      if (mounted) setState(() { _loading = false; _error = error.toString(); });
+    }
+  }
+
+  Future<void> _confirm(int purchaseId) async {
+    setState(() => _confirming.add(purchaseId));
+    try {
+      await ApiService.confirmSupplierOrder(purchaseId);
+      await _load();
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not confirm order: $error')));
+    } finally {
+      if (mounted) setState(() => _confirming.remove(purchaseId));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = _profile?['name']?.toString() ?? widget.identity;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Distributor workspace'),
+        actions: [
+          IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
+          IconButton(onPressed: widget.onLogout, icon: const Icon(Icons.logout)),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(padding: const EdgeInsets.all(20), children: [
+          Card(child: Padding(padding: const EdgeInsets.all(18), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.local_shipping_outlined, size: 38, color: Color(0xFF16845B)),
+              const SizedBox(height: 10),
+              Text(name, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              Text(widget.identity),
+              if (_profile?['phone'] != null) Text(_profile!['phone'].toString()),
+            ],
+          ))),
+          const SizedBox(height: 20),
+          const Text('Purchase orders', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+          if (_loading) const LinearProgressIndicator(),
+          if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
+          if (!_loading && _orders.isEmpty) const Padding(
+            padding: EdgeInsets.all(18),
+            child: Text('No purchase orders have been assigned to this distributor yet.')),
+          ..._orders.map((raw) {
+            final order = raw as Map<String, dynamic>;
+            final id = (order['purchase_id'] as num).toInt();
+            final items = order['items'] as List<dynamic>? ?? [];
+            return Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(order['purchase_order_number']?.toString() ?? 'PO #$id',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+                Text('Shop: ${order['shop_name']}'),
+                Text('Amount: ₹${order['total_amount']}'),
+                Text('Status: ${order['status']}'),
+                const Divider(),
+                ...items.map((item) => Text('Product #${item['product_id']} · Qty ${item['quantity']}')),
+                if (order['status'] == 'ordered')
+                  Align(alignment: Alignment.centerRight, child: FilledButton(
+                    onPressed: _confirming.contains(id) ? null : () => _confirm(id),
+                    child: Text(_confirming.contains(id) ? 'Confirming...' : 'Confirm order'),
+                  )),
+              ],
+            )));
+          }),
+          const Padding(padding: EdgeInsets.only(top: 16),
+            child: Text('Order confirmation is recorded in KiranaAI. Actual dispatch and delivery coordination still happen with the supplier.',
+              style: TextStyle(color: Colors.black54))),
+        ]),
+      ),
     );
   }
 }
