@@ -233,6 +233,11 @@ def confirm_supplier_order(
 
 
 
+class OpeningBatchInput(BaseModel):
+    batch_number: str = Field(min_length=1, max_length=100)
+    expiry_date: date
+
+
 class ReconcileBatchQuantity(BaseModel):
     batch_id: int = Field(gt=0)
     quantity: float = Field(ge=0)
@@ -474,4 +479,63 @@ def reconcile_shop_batches(
         "quantity_change": difference,
         "batches_reconciled": len(existing),
         "message": "Batch quantities reconciled and physically verified.",
+    }
+
+
+
+@router.post("/shops/{shop_id}/products/{product_id}/opening-batch", status_code=201)
+def create_opening_batch_for_legacy_stock(
+    shop_id: int,
+    product_id: int,
+    payload: OpeningBatchInput,
+    current_user: User = Depends(get_current_user),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    """Attach an unverified batch to existing legacy product stock that predates batch tracking."""
+    product = db.query(Product).filter(
+        Product.id == product_id,
+        Product.shop_id == shop_id,
+        Product.is_active.is_(True),
+    ).with_for_update().first()
+    if product is None:
+        raise HTTPException(404, "Active product not found in this shop")
+    quantity = float(product.quantity or 0)
+    if quantity <= 0:
+        raise HTTPException(409, "There is no positive opening stock to assign to a batch")
+    existing = db.query(ProductBatch).filter(
+        ProductBatch.product_id == product.id,
+    ).count()
+    if existing:
+        raise HTTPException(409, "This product already has batch records. Use batch reconciliation instead.")
+    if payload.expiry_date < date.today():
+        raise HTTPException(400, "Opening batch expiry date cannot be in the past")
+
+    batch = ProductBatch(
+        product_id=product.id,
+        batch_number=payload.batch_number.strip(),
+        expiry_date=payload.expiry_date,
+        quantity=quantity,
+        purchase_price=float(product.purchase_price or 0),
+        is_verified=False,
+    )
+    db.add(batch)
+    db.flush()
+    db.add(StockMovement(
+        product_id=product.id,
+        movement_type="adjustment",
+        quantity_change=0,
+        quantity_before=quantity,
+        quantity_after=quantity,
+        reason="Opening batch created for legacy stock",
+        performed_by=current_user.id,
+        reference_type="opening_batch_setup",
+    ))
+    db.commit()
+    return {
+        "product_id": product.id,
+        "batch_id": batch.id,
+        "quantity": quantity,
+        "is_verified": False,
+        "message": "Opening batch created. Verify its physical quantity before selling.",
     }
