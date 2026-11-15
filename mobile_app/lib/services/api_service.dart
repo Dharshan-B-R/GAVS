@@ -291,14 +291,14 @@ class ApiService {
   /// Purpose: Retrieve stock coverage and suggested reorder quantities.
   static Future<Map<String, dynamic>> getRestockRecommendations({
     int days = 30,
-    int warningDays = 7,
+    int leadTimeDays = 7,
   }) async {
     final shopId = await _requireActiveShopId();
     return _requestJson('GET',
       '/shops/$shopId/agents/reorder-recommendations',
       query: {
         'days': days.toString(),
-        'lead_time_days': warningDays.toString(),
+        'lead_time_days': leadTimeDays.toString(),
       });
   }
 
