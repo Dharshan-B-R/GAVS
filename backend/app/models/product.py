@@ -6,8 +6,12 @@ from app.database import Base
 
 class Product(Base):
     __tablename__ = "products"
+    __table_args__ = (
+        UniqueConstraint("shop_id", "barcode", name="uq_products_shop_barcode"),
+    )
 
-    id = Column(Integer, primary_key=True, index=True)\n    shop_id = Column(Integer, ForeignKey("shops.id", ondelete="RESTRICT"), nullable=False, index=True)\n
+    id = Column(Integer, primary_key=True, index=True)
+    shop_id = Column(Integer, ForeignKey("shops.id", ondelete="RESTRICT"), nullable=False, index=True)
 
     name = Column(String(150), nullable=False, index=True)
     category = Column(String(100), nullable=True)
