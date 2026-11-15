@@ -364,3 +364,29 @@ def list_shop_purchase_orders(
             "batch_id": item.batch_id,
         } for item in purchase.items],
     } for purchase in rows]
+
+
+
+@router.get("/shops/{shop_id}/inventory/batches")
+def list_shop_inventory_batches(
+    shop_id: int,
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    rows = db.query(ProductBatch, Product).join(
+        Product, Product.id == ProductBatch.product_id
+    ).filter(
+        Product.shop_id == shop_id,
+        Product.is_active.is_(True),
+        ProductBatch.quantity > 0,
+    ).order_by(ProductBatch.expiry_date.asc(), Product.name.asc()).limit(500).all()
+    return [{
+        "batch_id": batch.id,
+        "product_id": product.id,
+        "product_name": product.name,
+        "batch_number": batch.batch_number,
+        "quantity": batch.quantity,
+        "unit": product.unit,
+        "expiry_date": batch.expiry_date,
+        "is_verified": batch.is_verified,
+    } for batch, product in rows]
