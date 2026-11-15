@@ -2434,7 +2434,7 @@ if (showMessage) {
                     child: Text('No suppliers connected yet. Enter an active supplier ID to connect one.')),
                 if (_shopSuppliers.isNotEmpty)
                   DropdownButtonFormField<int>(
-                    value: _selectedSupplierId,
+                    initialValue: _selectedSupplierId,
                     decoration: const InputDecoration(labelText: 'Select supplier'),
                     items: _shopSuppliers.map((raw) {
                       final supplier = raw as Map<String, dynamic>;
@@ -2449,7 +2449,7 @@ if (showMessage) {
                 if (_supplierDirectory.isNotEmpty)
                   Row(children: [
                     Expanded(child: DropdownButtonFormField<int>(
-                      value: _supplierDirectorySelection,
+                      initialValue: _supplierDirectorySelection,
                       decoration: const InputDecoration(labelText: 'Find a supplier'),
                       items: _supplierDirectory.map((raw) {
                         final supplier = raw as Map<String, dynamic>;
@@ -2865,7 +2865,7 @@ if (showMessage) {
             const Text('New sale', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             DropdownButtonFormField<int>(
-              value: _saleProductId,
+              initialValue: _saleProductId,
               decoration: const InputDecoration(labelText: 'Product', border: OutlineInputBorder()),
               items: products.map((p) => DropdownMenuItem(value: p.id,
                 child: Text('${p.name} · ${p.quantity} ${p.unit}'))).toList(),
@@ -2896,7 +2896,7 @@ if (showMessage) {
                 style: const TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
-                value: _salePaymentMethod,
+                initialValue: _salePaymentMethod,
                 decoration: const InputDecoration(labelText: 'Payment method'),
                 items: const [
                   DropdownMenuItem(value: 'cash', child: Text('Cash')),
@@ -3073,7 +3073,7 @@ if (showMessage) {
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 10),
             child: DropdownButtonFormField<int>(
-              value: _activeShopId,
+              initialValue: _activeShopId,
               decoration: const InputDecoration(labelText: 'Active shop', border: OutlineInputBorder()),
               items: _myShops.map((shop) => DropdownMenuItem<int>(
                 value: (shop['shop_id'] as num).toInt(),
@@ -4177,7 +4177,7 @@ class _OpeningBatchDialogState extends State<OpeningBatchDialog> {
         const Text('For stock recorded before batch tracking. The existing product quantity will not be increased.'),
         const SizedBox(height: 12),
         DropdownButtonFormField<int>(
-          value: _productId,
+          initialValue: _productId,
           decoration: const InputDecoration(labelText: 'Product'),
           items: widget.products.map((product) => DropdownMenuItem(
             value: product.id,
