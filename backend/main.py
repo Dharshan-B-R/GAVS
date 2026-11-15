@@ -1718,6 +1718,8 @@ import math
 @app.post("/sales", response_model=SaleResponse)
 def create_sale(
     sale_data: SaleCreate,
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
     db: Session = Depends(get_db)
 ):
     try:
@@ -1738,6 +1740,7 @@ def create_sale(
         # Lock active products in a consistent order
         products = db.query(Product).filter(
             Product.id.in_(product_ids),
+            Product.shop_id == shop_id,
             Product.is_active.is_(True)
         ).order_by(
             Product.id.asc()
@@ -1870,6 +1873,7 @@ def create_sale(
 
         # Create the main sales transaction
         sale = Sale(
+            shop_id=shop_id,
             total_amount=final_total,
             discount_amount=total_discount,
             payment_method=sale_data.payment_method.value,
