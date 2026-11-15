@@ -455,8 +455,10 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
 
 
   Map<String, dynamic> inventorySummary = {};
-
   bool? backendConnected;
+  List<Map<String, dynamic>> _myShops = [];
+  int? _activeShopId;
+  String? _activeShopName;
 
 
 
