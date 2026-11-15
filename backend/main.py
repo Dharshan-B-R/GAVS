@@ -1790,6 +1790,7 @@ def create_sale(
     sale_data: SaleCreate,
     shop_id: int = Query(..., gt=0),
     membership=Depends(require_shop_staff),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     try:
