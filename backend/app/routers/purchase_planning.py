@@ -18,6 +18,7 @@ from app.models.shop_purchase_budget import ShopPurchaseBudget
 from app.models.purchase_proposal import PurchaseProposal
 from app.models.product import Product
 from app.models.supplier import Supplier
+from app.models.shop_distributor_connection import ShopDistributorConnection
 
 
 router = APIRouter(tags=["Purchase Planning and Approval"])
@@ -139,12 +140,20 @@ def create_purchase_proposal(
         ).first()
         if supplier is None:
             raise HTTPException(404, "Active supplier not found")
+        connection = db.query(ShopDistributorConnection).filter(
+            ShopDistributorConnection.shop_id == shop_id,
+            ShopDistributorConnection.supplier_id == payload.supplier_id,
+            ShopDistributorConnection.is_active.is_(True),
+        ).first()
+        if connection is None:
+            raise HTTPException(409, "Supplier is not actively connected to this shop")
 
     product_ids = [item.product_id for item in payload.items]
     if len(product_ids) != len(set(product_ids)):
         raise HTTPException(400, "A product may appear only once in a proposal")
     products = db.query(Product).filter(
         Product.id.in_(product_ids),
+        Product.shop_id == shop_id,
         Product.is_active.is_(True),
     ).all()
     if len(products) != len(product_ids):
