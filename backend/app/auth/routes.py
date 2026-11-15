@@ -726,8 +726,11 @@ def accept_employee_invitation(
     invitation.responded_at = now
     db.commit()
     db.refresh(user)
+    access_token = create_access_token(user_id=user.id, role=user.role)
     return {
         "message": "Employee account created and shop membership activated",
+        "access_token": access_token,
+        "token_type": "bearer",
         "user": {"id": user.id, "full_name": user.full_name, "email": user.email, "role": user.role},
         "shop_id": invitation.shop_id,
     }
