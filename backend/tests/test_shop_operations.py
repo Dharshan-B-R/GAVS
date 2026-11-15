@@ -321,3 +321,51 @@ def test_supplier_cannot_access_shop_owner_purchase_budget(client):
         headers=auth(supplier.json()["access_token"]),
     )
     assert response.status_code == 403
+
+
+
+def test_owner_can_suspend_and_reactivate_employee_membership(client):
+    owner = register_owner(client, "employee-admin-owner@example.com")
+    shop_id = owner["shop"]["id"]
+    invitation = client.post(
+        f"/auth/shops/{shop_id}/employees/invitations",
+        headers=auth(owner["access_token"]),
+        json={"email": "managed-employee@example.com"},
+    )
+    accepted = client.post(
+        "/auth/employees/accept-invitation",
+        json={
+            "invitation_token": invitation.json()["invitation_token"],
+            "full_name": "Managed Employee",
+            "password": "EmployeePass@123",
+        },
+    )
+    employee_id = accepted.json()["user"]["id"]
+    suspended = client.patch(
+        f"/shops/{shop_id}/employees/{employee_id}/status",
+        headers=auth(owner["access_token"]),
+        json={"is_active": False},
+    )
+    assert suspended.status_code == 200
+    employee_login = client.post(
+        "/auth/login",
+        data={"username": "managed-employee@example.com", "password": "EmployeePass@123"},
+    )
+    employee_shops = client.get(
+        "/auth/shops",
+        headers=auth(employee_login.json()["access_token"]),
+    )
+    assert employee_shops.status_code == 200
+    assert employee_shops.json() == []
+
+    reactivated = client.patch(
+        f"/shops/{shop_id}/employees/{employee_id}/status",
+        headers=auth(owner["access_token"]),
+        json={"is_active": True},
+    )
+    assert reactivated.status_code == 200
+    employee_shops = client.get(
+        "/auth/shops",
+        headers=auth(employee_login.json()["access_token"]),
+    )
+    assert len(employee_shops.json()) == 1
