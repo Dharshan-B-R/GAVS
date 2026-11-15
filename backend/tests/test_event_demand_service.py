@@ -52,3 +52,11 @@ def test_event_demand_compares_event_with_observed_baseline(db_session):
 def test_event_demand_validates_parameters(db_session, kwargs):
     with pytest.raises(ValueError):
         analyze_event_demand(db_session, 1, "Event", date(2026, 11, 1), **kwargs)
+
+
+def test_event_demand_rejects_future_or_incomplete_window(db_session):
+    with pytest.raises(ValueError, match="completed event window"):
+        analyze_event_demand(
+            db_session, 1, "Upcoming festival",
+            date.today() + timedelta(days=5), window_days=7,
+        )
