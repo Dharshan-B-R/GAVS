@@ -201,6 +201,8 @@ def supplier_orders(
         "created_at": purchase.created_at,
         "items": [{
             "product_id": item.product_id,
+            "product_name": item.product.name if item.product else None,
+            "unit": item.product.unit if item.product else None,
             "quantity": item.quantity,
             "unit_price": item.unit_price,
             "subtotal": item.subtotal,
