@@ -477,6 +477,8 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   final TextEditingController _supplierIdController = TextEditingController();
   bool _purchasePlanningLoading = false;
   bool _budgetSaving = false;
+  double _committedBudget = 0;
+  double _remainingBudget = 0;
   final TextEditingController _employeeEmailController = TextEditingController();
   List<dynamic> _employees = [];
   bool _employeesLoading = false;
@@ -2125,6 +2127,8 @@ if (showMessage) {
               ? (_supplierDirectory.first['supplier_id'] as num).toInt() : null;
         }
         _budgetController.text = budget['available_amount']?.toString() ?? '0.00';
+        _committedBudget = (double.tryParse(budget['committed_amount']?.toString() ?? '') ?? 0);
+        _remainingBudget = (double.tryParse(budget['remaining_amount']?.toString() ?? '') ?? 0);
         _purchasePlanningLoading = false;
       });
     } catch (error) {
@@ -2382,6 +2386,9 @@ if (showMessage) {
                 TextField(controller: _budgetController,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(labelText: 'Available purchase budget (INR)', prefixText: '₹', border: OutlineInputBorder())),
+                const SizedBox(height: 8),
+                Text('Committed: ₹${_committedBudget.toStringAsFixed(2)} · Remaining: ₹${_remainingBudget.toStringAsFixed(2)}',
+                  style: const TextStyle(color: Colors.black54)),
                 const SizedBox(height: 8),
                 Align(alignment: Alignment.centerRight, child: FilledButton(
                   onPressed: _budgetSaving ? null : _savePurchaseBudget,
