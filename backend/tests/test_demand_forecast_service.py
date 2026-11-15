@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone, date
 import pytest
 
 from app.models.product import Product
+from app.models.shop import Shop
 from app.models.stock_movement import StockMovement
 from app.models.product_batch import ProductBatch
 from app.services.demand_forecast_service import forecast_demand
@@ -11,6 +12,10 @@ from app.services.reorder_service import build_reorder_recommendations
 
 
 def _product(db, **overrides):
+    if db.get(Shop, 1) is None:
+        db.add(Shop(id=1, name="Forecast Test Shop"))
+        db.flush()
+
     values = {
         "shop_id": 1,
         "name": "Forecast Rice",
