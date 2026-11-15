@@ -898,7 +898,7 @@ if (showMessage) {
 
         return AlertDialog(
 
-          title: const Text('Delete product?'),
+          title: const Text('Archive product?'),
 
           content: Text(
 
@@ -934,7 +934,7 @@ if (showMessage) {
 
               ),
 
-              child: const Text('Delete'),
+              child: const Text('Archive'),
 
             ),
 
@@ -964,7 +964,7 @@ if (showMessage) {
 
       if (mounted) {
 
-        showSnackBar('Product deleted successfully.');
+        showSnackBar('Product archived. Historical records were preserved.');
 
       }
 
