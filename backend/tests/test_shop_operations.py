@@ -535,3 +535,34 @@ def test_purchase_approval_cannot_exceed_cash_budget(client, db_session):
     )
     assert approval.status_code == 409
     assert db_session.query(Purchase).filter(Purchase.shop_id == shop_id).count() == 0
+
+
+
+def test_legacy_positive_stock_can_be_assigned_to_opening_batch_once(client, db_session):
+    owner = register_owner(client, "legacy-stock-owner@example.com")
+    shop_id = owner["shop"]["id"]
+    product = Product(
+        shop_id=shop_id, name="Legacy Rice", quantity=7, minimum_stock=2,
+        purchase_price=40, selling_price=50, unit="kg", is_active=True,
+    )
+    db_session.add(product)
+    db_session.flush()
+
+    response = client.post(
+        f"/shops/{shop_id}/products/{product.id}/opening-batch",
+        headers=auth(owner["access_token"]),
+        json={"batch_number": "LEGACY-RICE-01", "expiry_date": "2027-12-31"},
+    )
+    assert response.status_code == 201, response.text
+    db_session.refresh(product)
+    batch = db_session.query(ProductBatch).filter_by(product_id=product.id).one()
+    assert product.quantity == 7
+    assert batch.quantity == 7
+    assert batch.is_verified is False
+
+    duplicate = client.post(
+        f"/shops/{shop_id}/products/{product.id}/opening-batch",
+        headers=auth(owner["access_token"]),
+        json={"batch_number": "LEGACY-RICE-02", "expiry_date": "2027-12-31"},
+    )
+    assert duplicate.status_code == 409
