@@ -2005,7 +2005,7 @@ if (showMessage) {
     final estimate = recommendation['estimated_total_cost'];
     if (estimate is num) return estimate.toDouble();
     final quantity = _recommendationNumber(
-      recommendation['suggested_quantity'] ?? recommendation['suggested_quantity'] ?? recommendation['suggested_reorder_quantity'],
+      recommendation['suggested_quantity'] ?? recommendation['suggested_reorder_quantity'],
     );
     return (product?.purchasePrice ?? 0) * quantity;
   }
@@ -2134,12 +2134,12 @@ if (showMessage) {
                 product?.unit ?? 'pieces';
             final currentStock =
                 _recommendationNumber(recommendation['saleable_stock'] ?? recommendation['current_stock']);
-            final minimumStock =
+            final minimumStock = product?.minimumStock ??
                 _recommendationNumber(recommendation['minimum_stock']);
             final averageDailySales =
                 _recommendationNumber(recommendation['average_daily_demand'] ?? recommendation['average_daily_sales']);
             final suggestedQuantity = _recommendationNumber(
-              recommendation['suggested_reorder_quantity'],
+              recommendation['suggested_quantity'] ?? recommendation['suggested_reorder_quantity'],
             );
             final dailyDemand = _recommendationNumber(recommendation['average_daily_demand'] ?? recommendation['average_daily_sales']);
             final remainingDays = recommendation['estimated_days_remaining'] ??
