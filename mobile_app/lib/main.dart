@@ -466,7 +466,6 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   final Set<int> selectedRestockProducts = <int>{};
   bool isRestockLoading = false;
   String? restockError;
-  bool purchasePlanApproved = false;
   List<dynamic> _shopSuppliers = [];
   List<dynamic> _supplierDirectory = [];
   int? _supplierDirectorySelection;
@@ -2552,7 +2551,6 @@ if (showMessage) {
                                     } else {
                                       selectedRestockProducts.remove(productId);
                                     }
-                                    purchasePlanApproved = false;
                                   });
                                 },
                         ),
