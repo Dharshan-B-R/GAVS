@@ -313,3 +313,54 @@ def adjust_inventory_stock(
         "batch_verification_required": change > 0,
         "message": "Stock adjustment recorded with an audit movement.",
     }
+
+
+
+@router.get("/shops/{shop_id}/distributor-directory")
+def distributor_directory(
+    shop_id: int,
+    membership=Depends(require_shop_owner),
+    db: Session = Depends(get_db),
+):
+    connected_ids = db.query(ShopDistributorConnection.supplier_id).filter(
+        ShopDistributorConnection.shop_id == shop_id,
+        ShopDistributorConnection.is_active.is_(True),
+    ).subquery()
+    rows = db.query(Supplier).filter(
+        Supplier.is_active.is_(True),
+        ~Supplier.id.in_(connected_ids),
+    ).order_by(Supplier.name.asc()).limit(100).all()
+    return [{
+        "supplier_id": supplier.id,
+        "name": supplier.name,
+        "contact_person": supplier.contact_person,
+        "phone": supplier.phone,
+        "email": supplier.email,
+    } for supplier in rows]
+
+
+@router.get("/shops/{shop_id}/purchase-orders")
+def list_shop_purchase_orders(
+    shop_id: int,
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    rows = db.query(Purchase).options(joinedload(Purchase.items)).filter(
+        Purchase.shop_id == shop_id,
+        Purchase.proposal_id.isnot(None),
+    ).order_by(Purchase.created_at.desc()).limit(100).all()
+    return [{
+        "purchase_id": purchase.id,
+        "proposal_id": purchase.proposal_id,
+        "supplier_id": purchase.supplier_id,
+        "purchase_order_number": purchase.invoice_number,
+        "status": purchase.status,
+        "total_amount": purchase.total_amount,
+        "items": [{
+            "purchase_item_id": item.id,
+            "product_id": item.product_id,
+            "quantity": item.quantity,
+            "unit_price": item.unit_price,
+            "batch_id": item.batch_id,
+        } for item in purchase.items],
+    } for purchase in rows]
