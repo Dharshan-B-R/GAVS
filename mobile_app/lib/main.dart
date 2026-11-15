@@ -4267,7 +4267,7 @@ class _OpeningBatchDialogState extends State<OpeningBatchDialog> {
           )).toList(),
           onChanged: (value) => setState(() => _productId = value),
         ),
-        TextField(controller: _batch, decoration: const InputDecoration(labelText: 'Batch number')),
+        TextField(controller: _batch, onChanged: (_) => setState(() {}), decoration: const InputDecoration(labelText: 'Batch number')),
         const SizedBox(height: 8),
         OutlinedButton.icon(
           onPressed: () async {
