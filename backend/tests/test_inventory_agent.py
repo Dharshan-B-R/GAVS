@@ -27,6 +27,8 @@ from app.agents.inventory_agent import (
         ("Show stock coverage for last 14 days", "stock_coverage"),
         ("Find dead stock", "dead_stock"),
         ("Which products have no sales?", "dead_stock"),
+        ("Show me products that have not sold in the last 90 days", "dead_stock"),
+        ("Show items not sold in the last 30 days", "dead_stock"),
         ("Show fast-moving products", "fast_moving"),
         ("What are my best quick-selling items?", "fast_moving"),
         ("Show slow-moving products", "slow_moving"),
