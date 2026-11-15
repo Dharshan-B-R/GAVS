@@ -7,9 +7,9 @@ Phase 2 is being delivered incrementally on top of the existing Phase 1 applicat
 | Capability | Implementation | API | Safety / data rule |
 |---|---|---|---|
 | Product Name Intelligence | Shop-scoped aliases, normalization and exact/fuzzy matching | `/shops/{shop_id}/product-aliases`, `/shops/{shop_id}/product-name-matches` | Fuzzy matches require human confirmation; aliases do not merge products |
-| Expiry Intelligence | Batch expiry exposure and recorded expiry-loss/credit summary | `GET /shops/{shop_id}/agents/expiry-risk` | Uses recorded batch quantities, purchase prices and credits |
+| Expiry Intelligence | Batch expiry exposure and completed disposal-loss/credited-return summary | `GET /shops/{shop_id}/agents/expiry-risk` | Pending requests are not counted as realized losses; all at-risk batches contribute to totals |
 | Stockout Risk | Stockout timing from recorded sale velocity and verified unexpired stock | `GET /shops/{shop_id}/agents/stockout-risk` | Unknown demand stays unknown; no orders are created |
-| Seasonal Demand | Month-by-month observed sales patterns | `GET /shops/{shop_id}/agents/seasonal-demand` | Requires substantial history; missing months are not treated as zero |
+| Seasonal Demand | Month-by-month observed sales patterns | `GET /shops/{shop_id}/agents/seasonal-demand` | Requires substantial history; missing months are not treated as zero; festival questions route to seasonal analysis |
 | Festival / Event Demand | Compare a caller-specified event window with its preceding baseline | `GET /shops/{shop_id}/agents/event-demand` | Descriptive comparison only; no fabricated festival multiplier |
 | Supplier Price Intelligence | Historical received-invoice price comparison by product and supplier | `GET /shops/{shop_id}/agents/supplier-prices` | Uses shop-owned products and received purchases only |
 
