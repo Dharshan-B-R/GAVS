@@ -751,65 +751,76 @@ if (showMessage) {
 
   /// Updates the product quantity through PUT /products/{productId}.
 
-  Future<void> changeStock(
-
-    Product product,
-
-    double difference,
-
-  ) async {
-
-    final newQuantity =
-
-        product.quantity + difference;
-
-
-
-    if (newQuantity < 0) return;
-
-
-
+  Future<void> changeStock(Product product, double difference) async {
     try {
-
-      await ApiService.updateProduct(
-
-        product.id,
-
-        {'quantity': newQuantity},
-
-      );
-
-
-
-      await loadBackendData();
-
-
-
-      if (mounted) {
-
-        showSnackBar('Stock updated successfully.');
-
-      }
-
-    } catch (error) {
-
-      if (mounted) {
-
-        showSnackBar(
-
-          'Stock update failed: $error',
-
-          isError: true,
-
+      if (difference > 0) {
+        final batchController = TextEditingController();
+        DateTime? expiryDate;
+        final details = await showDialog<Map<String, dynamic>>(
+          context: context,
+          builder: (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: Text('Add stock · ${product.name}'),
+              content: Column(mainAxisSize: MainAxisSize.min, children: [
+                TextField(controller: batchController,
+                  decoration: const InputDecoration(labelText: 'Batch number')),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final selected = await showDatePicker(
+                      context: context,
+                      firstDate: DateTime.now(),
+                      lastDate: DateTime(2100),
+                      initialDate: DateTime.now().add(const Duration(days: 180)),
+                    );
+                    if (selected != null) setDialogState(() => expiryDate = selected);
+                  },
+                  icon: const Icon(Icons.calendar_today),
+                  label: Text(expiryDate == null ? 'Select expiry date' :
+                    'Expiry: ${expiryDate!.toIso8601String().substring(0, 10)}'),
+                ),
+                const SizedBox(height: 8),
+                const Text('New stock remains unavailable for sale until its batch is verified.',
+                  style: TextStyle(color: Colors.black54)),
+              ]),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+                FilledButton(
+                  onPressed: () {
+                    if (batchController.text.trim().isEmpty || expiryDate == null) return;
+                    Navigator.pop(dialogContext, {
+                      'batch': batchController.text.trim(),
+                      'expiry': expiryDate!.toIso8601String().substring(0, 10),
+                    });
+                  },
+                  child: const Text('Add batch'),
+                ),
+              ],
+            ),
+          ),
         );
-
+        batchController.dispose();
+        if (details == null) return;
+        await ApiService.adjustStock(
+          productId: product.id,
+          quantityChange: difference,
+          reason: 'Manual stock addition',
+          batchNumber: details['batch'] as String,
+          expiryDate: details['expiry'] as String,
+        );
+      } else {
+        await ApiService.adjustStock(
+          productId: product.id,
+          quantityChange: difference,
+          reason: 'Manual stock reduction / wastage',
+        );
       }
-
+      await loadBackendData();
+      if (mounted) showSnackBar('Audited stock adjustment recorded.');
+    } catch (error) {
+      if (mounted) showSnackBar('Stock adjustment failed: $error', isError: true);
     }
-
   }
-
-
 
   /// Deletes a product through DELETE /products/{productId}.
 
