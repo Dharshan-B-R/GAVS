@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Body
+from fastapi import FastAPI, Depends, HTTPException, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -92,7 +92,7 @@ app = FastAPI(
 # Purpose: Register authentication endpoints.
 # ==========================================
 
-from app.auth.routes import router as auth_router
+from app.auth.routes import router as auth_router, require_shop_staff
 
 app.include_router(auth_router)
 
@@ -141,8 +141,14 @@ def health_check():
 
 # GET: View all active products
 @app.get("/products", response_model=list[ProductResponse])
-def get_products(db: Session = Depends(get_db)):
-    return db.query(Product).filter(Product.is_active == True).all()
+def get_products(
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    return db.query(Product).filter(
+        Product.shop_id == shop_id, Product.is_active.is_(True)
+    ).all()
 
 
 
@@ -152,9 +158,11 @@ def get_products(db: Session = Depends(get_db)):
 @app.post("/products", response_model=ProductResponse, status_code=201)
 def create_product(
     product_data: ProductCreate,
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
     db: Session = Depends(get_db)
 ):
-    product = Product(**product_data.model_dump())
+    product = Product(**product_data.model_dump(), shop_id=shop_id)
 
     try:
         db.add(product)
@@ -175,9 +183,13 @@ def create_product(
 def update_product(
     product_id: int,
     product_data: ProductUpdate,
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
     db: Session = Depends(get_db)
 ):
-    product = db.query(Product).filter(Product.id == product_id).first()
+    product = db.query(Product).filter(
+        Product.id == product_id, Product.shop_id == shop_id
+    ).first()
 
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -269,8 +281,15 @@ def get_stock_status(db: Session = Depends(get_db)):
 
 # GET: View a product by ID
 @app.get("/products/{product_id}", response_model=ProductResponse)
-def get_product(product_id: int, db: Session = Depends(get_db)):
-    product = db.query(Product).filter(Product.id == product_id).first()
+def get_product(
+    product_id: int,
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    product = db.query(Product).filter(
+        Product.id == product_id, Product.shop_id == shop_id
+    ).first()
 
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
