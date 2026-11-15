@@ -427,3 +427,36 @@ def test_stock_adjustment_creates_batch_and_requires_verification(client, db_ses
     db_session.refresh(batch)
     assert product.quantity == 2
     assert batch.quantity == 2
+
+
+
+def test_employee_can_read_inventory_but_cannot_access_owner_budget(client):
+    owner = register_owner(client, "employee-scope-owner@example.com")
+    shop_id = owner["shop"]["id"]
+    invite = client.post(
+        f"/auth/shops/{shop_id}/employees/invitations",
+        headers=auth(owner["access_token"]),
+        json={"email": "employee-scope@example.com"},
+    )
+    accepted = client.post(
+        "/auth/employees/accept-invitation",
+        json={
+            "invitation_token": invite.json()["invitation_token"],
+            "full_name": "Inventory Employee",
+            "password": "EmployeePass@123",
+        },
+    )
+    employee_token = accepted.json()["access_token"]
+
+    inventory = client.get(
+        "/products/low-stock",
+        params={"shop_id": shop_id},
+        headers=auth(employee_token),
+    )
+    assert inventory.status_code == 200
+
+    budget = client.get(
+        f"/shops/{shop_id}/purchase-budget",
+        headers=auth(employee_token),
+    )
+    assert budget.status_code == 403
