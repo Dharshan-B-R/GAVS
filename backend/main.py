@@ -93,7 +93,7 @@ app = FastAPI(
 # Purpose: Register authentication endpoints.
 # ==========================================
 
-from app.auth.routes import router as auth_router, require_shop_staff
+from app.auth.routes import router as auth_router, require_shop_staff, get_current_user
 
 app.include_router(auth_router)
 
@@ -2299,7 +2299,10 @@ def reconcile_batch_stock(
 def verify_product_batch(
     batch_id: int,
     verification_data: dict = Body(...),
-    db: Session = Depends(get_db)
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     try:
         if (
@@ -2334,7 +2337,7 @@ def verify_product_batch(
             "allow_reverification", False
         )
 
-        performed_by = verification_data.get("performed_by")
+        performed_by = current_user.id
         reference_type = verification_data.get(
             "reference_type", "batch_verification"
         )
@@ -2377,8 +2380,11 @@ def verify_product_batch(
             )
 
         # Find batch
-        batch_reference = db.query(ProductBatch).filter(
-            ProductBatch.id == batch_id
+        batch_reference = db.query(ProductBatch).join(
+            Product, Product.id == ProductBatch.product_id
+        ).filter(
+            ProductBatch.id == batch_id,
+            Product.shop_id == shop_id,
         ).first()
 
         if not batch_reference:
@@ -2390,7 +2396,8 @@ def verify_product_batch(
         # Lock product first
         product = db.query(Product).filter(
             Product.id == batch_reference.product_id,
-            Product.is_active == True
+            Product.shop_id == shop_id,
+            Product.is_active.is_(True)
         ).with_for_update().first()
 
         if not product:
@@ -2532,10 +2539,12 @@ def verify_product_batch(
 
 @app.get("/batch-verifications")
 def get_batch_verification_history(
+    shop_id: int = Query(..., gt=0),
     batch_id: int = None,
     performed_by: int = None,
     limit: int = 50,
-    db: Session = Depends(get_db)
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
 ):
     try:
         # Validate filters
@@ -2568,7 +2577,7 @@ def get_batch_verification_history(
         ).join(
             Product,
             ProductBatch.product_id == Product.id
-        )
+        ).filter(Product.shop_id == shop_id)
 
         if batch_id is not None:
             query = query.filter(
@@ -2632,6 +2641,8 @@ def get_batch_verification_history(
 @app.get("/batch-verifications/{batch_id}")
 def get_batch_verification_by_batch(
     batch_id: int,
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
     db: Session = Depends(get_db)
 ):
     try:
@@ -2642,8 +2653,11 @@ def get_batch_verification_by_batch(
             )
 
         # Check whether batch exists
-        batch = db.query(ProductBatch).filter(
-            ProductBatch.id == batch_id
+        batch = db.query(ProductBatch).join(
+            Product, Product.id == ProductBatch.product_id
+        ).filter(
+            ProductBatch.id == batch_id,
+            Product.shop_id == shop_id,
         ).first()
 
         if not batch:
