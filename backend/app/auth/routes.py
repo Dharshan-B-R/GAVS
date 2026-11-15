@@ -11,7 +11,9 @@
 # 6. Protect private API endpoints.
 # ==========================================
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import hashlib
+import secrets
 
 from fastapi import (
     APIRouter,
@@ -31,12 +33,15 @@ from app.models.user import User
 from app.models.shop import Shop
 from app.models.supplier import Supplier
 from app.models.shop_membership import ShopMembership
+from app.models.shop_invitation import ShopInvitation
 
 from app.auth.schemas import (
     OwnerRegister,
     DistributorRegister,
     TokenResponse,
     UserResponse,
+    EmployeeInviteCreate,
+    EmployeeInviteAccept,
 )
 
 from app.auth.security import (
@@ -605,3 +610,124 @@ def get_my_account(
 ):
 
     return current_user
+
+
+# ==========================================
+# EMPLOYEE INVITATIONS
+# Owners create time-limited, single-use invitations.
+# Only a hash of the invitation token is stored.
+# ==========================================
+
+@router.post("/shops/{shop_id}/employees/invitations", status_code=201)
+def invite_employee(
+    shop_id: int,
+    payload: EmployeeInviteCreate,
+    membership=Depends(require_shop_owner),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    email = str(payload.email).strip().lower()
+    if db.query(User).filter(User.email == email).first():
+        raise HTTPException(409, "This email already has an account")
+    pending = db.query(ShopInvitation).filter(
+        ShopInvitation.shop_id == shop_id,
+        ShopInvitation.invitee_email == email,
+        ShopInvitation.invitation_type == "employee",
+        ShopInvitation.status == "pending",
+    ).first()
+    if pending and pending.expires_at > datetime.now(timezone.utc):
+        raise HTTPException(409, "A pending invitation already exists for this email")
+
+    raw_token = secrets.token_urlsafe(32)
+    invitation = ShopInvitation(
+        shop_id=shop_id,
+        inviter_user_id=current_user.id,
+        invitee_email=email,
+        invitation_type="employee",
+        token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+        status="pending",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    )
+    db.add(invitation)
+    db.commit()
+    db.refresh(invitation)
+    return {
+        "invitation_id": invitation.id,
+        "email": email,
+        "role": "Employee",
+        "expires_at": invitation.expires_at,
+        "invitation_token": raw_token,
+        "message": "Share this token securely with the invited employee. It is shown only once.",
+    }
+
+
+@router.get("/shops/{shop_id}/employees/invitations")
+def list_employee_invitations(
+    shop_id: int,
+    membership=Depends(require_shop_owner),
+    db: Session = Depends(get_db),
+):
+    rows = db.query(ShopInvitation).filter(
+        ShopInvitation.shop_id == shop_id,
+        ShopInvitation.invitation_type == "employee",
+    ).order_by(ShopInvitation.created_at.desc()).limit(100).all()
+    now = datetime.now(timezone.utc)
+    return [{
+        "invitation_id": row.id,
+        "email": row.invitee_email,
+        "status": "expired" if row.status == "pending" and row.expires_at <= now else row.status,
+        "expires_at": row.expires_at,
+        "created_at": row.created_at,
+    } for row in rows]
+
+
+@router.post("/employees/accept-invitation", status_code=201)
+def accept_employee_invitation(
+    payload: EmployeeInviteAccept,
+    db: Session = Depends(get_db),
+):
+    token_hash = hashlib.sha256(payload.invitation_token.encode()).hexdigest()
+    invitation = db.query(ShopInvitation).filter(
+        ShopInvitation.token_hash == token_hash,
+        ShopInvitation.invitation_type == "employee",
+    ).with_for_update().first()
+    if invitation is None or invitation.status != "pending":
+        raise HTTPException(404, "Invitation is invalid or already used")
+    now = datetime.now(timezone.utc)
+    expires_at = invitation.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at <= now:
+        invitation.status = "expired"
+        db.commit()
+        raise HTTPException(410, "Invitation has expired")
+
+    email = (invitation.invitee_email or "").strip().lower()
+    if db.query(User).filter(User.email == email).first():
+        raise HTTPException(409, "An account already exists for this invitation email")
+
+    user = User(
+        full_name=payload.full_name.strip(),
+        email=email,
+        password_hash=hash_password(payload.password),
+        role="Employee",
+        is_active=True,
+    )
+    db.add(user)
+    db.flush()
+    db.add(ShopMembership(
+        user_id=user.id,
+        shop_id=invitation.shop_id,
+        role="Employee",
+        is_active=True,
+    ))
+    invitation.status = "accepted"
+    invitation.accepted_by_user_id = user.id
+    invitation.responded_at = now
+    db.commit()
+    db.refresh(user)
+    return {
+        "message": "Employee account created and shop membership activated",
+        "user": {"id": user.id, "full_name": user.full_name, "email": user.email, "role": user.role},
+        "shop_id": invitation.shop_id,
+    }
