@@ -3432,7 +3432,6 @@ class _AddProductDialogState extends State<AddProductDialog> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _categoryController = TextEditingController();
-  final _quantityController = TextEditingController(text: '0');
   final _minimumController = TextEditingController(text: '0');
   final _purchaseController = TextEditingController(text: '0');
   final _sellingController = TextEditingController(text: '0');
@@ -3443,7 +3442,6 @@ class _AddProductDialogState extends State<AddProductDialog> {
   void dispose() {
     _nameController.dispose();
     _categoryController.dispose();
-    _quantityController.dispose();
     _minimumController.dispose();
     _purchaseController.dispose();
     _sellingController.dispose();
