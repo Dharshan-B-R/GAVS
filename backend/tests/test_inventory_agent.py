@@ -78,7 +78,7 @@ def test_analysis_period_is_capped_at_365_days():
     [
         ("Show top 5 fast-moving products", 5),
         ("Show first 3 low-stock products", 3),
-        ("Show me 7 dead stock items", 10),
+        ("Show me 7 dead stock items", 7),
         ("Show top 500 slow-moving products", 100),
         ("Show top 0 products", 1),
     ],
