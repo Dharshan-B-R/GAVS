@@ -48,6 +48,8 @@ model_modules = [
     "app.models.stock_movement",
     "app.models.supplier",
     "app.models.user",
+    "app.models.shop_purchase_budget",
+    "app.models.purchase_proposal",
 ]
 for module_name in model_modules:
     importlib.import_module(module_name)
