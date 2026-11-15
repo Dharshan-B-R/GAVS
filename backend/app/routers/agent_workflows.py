@@ -10,6 +10,7 @@ from app.agents.supplier_agent import compare_suppliers
 from app.agents.orchestrator import route_question
 from app.services.inventory_intelligence_service import analyze_inventory
 from app.services.expiry_intelligence_service import analyze_expiry_risk
+from app.services.stockout_prediction_service import predict_stockout_risk
 
 router = APIRouter(tags=["KiranaAI Agents"])
 
@@ -23,6 +24,22 @@ def demand_forecast(
     db: Session = Depends(get_db),
 ):
     return forecast_demand(db, days, limit, shop_id=shop_id)
+
+
+@router.get("/shops/{shop_id}/agents/stockout-risk")
+def stockout_risk(
+    shop_id: int,
+    history_days: int = Query(30, ge=7, le=365),
+    lead_time_days: int = Query(7, ge=1, le=90),
+    warning_days: int = Query(14, ge=1, le=90),
+    limit: int = Query(100, ge=1, le=100),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    """Estimate stockout timing from recorded sales and saleable stock."""
+    return predict_stockout_risk(
+        db, shop_id, history_days, lead_time_days, warning_days, limit
+    )
 
 
 @router.get("/shops/{shop_id}/agents/expiry-risk")
