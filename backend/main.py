@@ -239,21 +239,27 @@ def delete_product(
 
 # GET: View all low-stock products
 @app.get("/products/low-stock", response_model=list[ProductResponse])
-def get_low_stock_products(db: Session = Depends(get_db)):
-
-    products = db.query(Product).filter(
-        Product.is_active == True,
-        Product.quantity <= Product.minimum_stock
+def get_low_stock_products(
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    return db.query(Product).filter(
+        Product.shop_id == shop_id,
+        Product.is_active.is_(True),
+        Product.quantity <= Product.minimum_stock,
     ).all()
-
-    return products
 
 # GET: View stock status of all products
 @app.get("/products/stock-status")
-def get_stock_status(db: Session = Depends(get_db)):
-
+def get_stock_status(
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
     products = db.query(Product).filter(
-        Product.is_active == True
+        Product.shop_id == shop_id,
+        Product.is_active.is_(True),
     ).all()
 
     result = []
@@ -355,7 +361,9 @@ def get_inventory_summary(
 @app.post("/product-batches", status_code=201)
 def create_product_batch(
     batch_data: dict = Body(...),
-    db: Session = Depends(get_db)
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
 ):
     try:
         product_id = batch_data.get("product_id")
@@ -466,7 +474,8 @@ def create_product_batch(
         # Lock product first
         product = db.query(Product).filter(
             Product.id == product_id,
-            Product.is_active == True
+            Product.shop_id == shop_id,
+            Product.is_active.is_(True),
         ).with_for_update().first()
 
         if not product:
@@ -4687,8 +4696,11 @@ def get_slow_moving_products(
                     StockMovement.id
                 ).label("number_of_sales")
             )
+            .join(Product, Product.id == StockMovement.product_id)
             .filter(
+                Product.shop_id == shop_id,
                 StockMovement.movement_type == "sale",
+                StockMovement.quantity_change < 0,
                 StockMovement.created_at >= start_date,
                 StockMovement.created_at <= end_date
             )
