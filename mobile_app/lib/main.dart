@@ -466,6 +466,9 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   final TextEditingController _supplierIdController = TextEditingController();
   bool _purchasePlanningLoading = false;
   bool _budgetSaving = false;
+  final TextEditingController _employeeEmailController = TextEditingController();
+  List<dynamic> _employees = [];
+  bool _employeesLoading = false;
   final TextEditingController _saleQuantityController = TextEditingController(text: '1');
   final TextEditingController _aiQuestionController = TextEditingController();
   int? _saleProductId;
@@ -985,6 +988,8 @@ if (showMessage) {
           } else if (index == 3) {
             loadBackendData();
             loadRestockRecommendations();
+          } else if (index == 5 && widget.userRole == 'owner') {
+            _loadEmployees();
           }
 
         },
@@ -1963,6 +1968,55 @@ if (showMessage) {
   }
 
 
+  Future<void> _loadEmployees() async {
+    if (widget.userRole != 'owner') return;
+    setState(() => _employeesLoading = true);
+    try {
+      final rows = await ApiService.getEmployees();
+      if (mounted) setState(() { _employees = rows; _employeesLoading = false; });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _employeesLoading = false);
+        showSnackBar('Could not load employees: $error', isError: true);
+      }
+    }
+  }
+
+  Future<void> _inviteEmployee() async {
+    final email = _employeeEmailController.text.trim();
+    if (!email.contains('@')) {
+      showSnackBar('Enter a valid employee email.', isError: true);
+      return;
+    }
+    try {
+      final result = await ApiService.inviteEmployee(email);
+      _employeeEmailController.clear();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Employee invitation created'),
+          content: SelectableText(
+            'Share this one-time invitation token securely with $email:\n\n${result['invitation_token']}\n\nIt expires in 7 days.',
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))],
+        ),
+      );
+      await _loadEmployees();
+    } catch (error) {
+      if (mounted) showSnackBar('Invitation failed: $error', isError: true);
+    }
+  }
+
+  Future<void> _toggleEmployee(int userId, bool active) async {
+    try {
+      await ApiService.setEmployeeStatus(userId, active);
+      await _loadEmployees();
+    } catch (error) {
+      if (mounted) showSnackBar('Could not update employee: $error', isError: true);
+    }
+  }
+
   Future<void> _loadPurchasePlanningData() async {
     if (widget.userRole != 'owner') return;
     setState(() => _purchasePlanningLoading = true);
@@ -2827,6 +2881,38 @@ if (showMessage) {
         ),
 
 
+
+        if (widget.userRole == 'owner') ...[
+          const SizedBox(height: 12),
+          Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Employee access', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              TextField(controller: _employeeEmailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: 'Employee email', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              Align(alignment: Alignment.centerRight,
+                child: FilledButton.tonal(onPressed: _inviteEmployee, child: const Text('Create invitation'))),
+              const Divider(),
+              if (_employeesLoading) const LinearProgressIndicator(),
+              ..._employees.map((raw) {
+                final employee = raw as Map<String, dynamic>;
+                final userId = (employee['user_id'] as num).toInt();
+                return SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(employee['full_name'].toString()),
+                  subtitle: Text(employee['email'].toString()),
+                  value: employee['is_active'] == true,
+                  onChanged: (active) => _toggleEmployee(userId, active),
+                );
+              }),
+              if (!_employeesLoading && _employees.isEmpty)
+                const Text('No employees added yet.'),
+            ],
+          ))),
+        ],
 
         const Card(
 
