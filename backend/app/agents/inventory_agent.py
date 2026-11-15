@@ -371,3 +371,108 @@ Rules:
             "Unable to understand the inventory question. "
             "Please rephrase it or try a more specific stock question."
         ) from error
+
+
+
+def format_inventory_answer(
+    question: str,
+    intent: str,
+    analytics_data: dict,
+) -> str:
+    """
+    Turn deterministic service results into a concise owner-facing answer.
+
+    This formatter deliberately uses only values returned by the database
+    service. It does not ask an LLM to fill gaps or invent recommendations.
+    """
+    if not isinstance(analytics_data, dict):
+        raise ValueError("Inventory analysis returned an invalid result.")
+
+    if intent == "data_readiness":
+        summary = analytics_data.get("summary", {})
+        readiness = analytics_data.get("readiness", {})
+        return (
+            f"Data readiness: {readiness.get('status', 'unknown')}. "
+            f"{readiness.get('message', '')} "
+            f"Active products: {summary.get('total_active_products', 0)}; "
+            f"mature products: {summary.get('mature_products', 0)}; "
+            f"products with recorded sales: {summary.get('products_with_sales', 0)}; "
+            f"units sold in the last 30 days: {summary.get('total_units_sold', 0)}."
+        )
+
+    if intent == "inventory_health":
+        summary = analytics_data.get("summary", {})
+        readiness = analytics_data.get("data_readiness", {})
+        return (
+            "Inventory health summary: "
+            f"{summary.get('out_of_stock_products', 0)} out of stock, "
+            f"{summary.get('critical_stock_products', 0)} critical, "
+            f"{summary.get('low_stock_products', 0)} low stock, "
+            f"{summary.get('healthy_products', 0)} healthy, "
+            f"{summary.get('unknown_demand_products', 0)} with unknown demand. "
+            f"Expired or expiring batches: "
+            f"{summary.get('expired_or_expiring_batches', 0)}. "
+            f"Data readiness: {readiness.get('status', 'unknown')}."
+        )
+
+    rows = analytics_data.get("products")
+    row_label = "products"
+    if rows is None:
+        rows = analytics_data.get("batches", [])
+        row_label = "batches"
+
+    count = analytics_data.get("count", len(rows or []))
+    period = analytics_data.get(
+        "analysis_period_days",
+        analytics_data.get("horizon_days"),
+    )
+
+    if not rows:
+        period_text = f" in the selected {period}-day period" if period else ""
+        return f"No matching inventory {row_label} were found{period_text}."
+
+    lines = [f"Found {count} matching {row_label}."]
+    if period:
+        lines.append(f"Analysis period: {period} days.")
+
+    for row in rows:
+        name = row.get("product_name", "Unnamed product")
+        if intent == "low_stock":
+            lines.append(
+                f"- {name}: {row.get('current_stock')} {row.get('unit') or ''} "
+                f"in stock; minimum {row.get('minimum_stock')}; "
+                f"shortfall {row.get('shortfall')}."
+            )
+        elif intent == "stock_coverage":
+            remaining = row.get("estimated_days_remaining")
+            remaining_text = (
+                f"{remaining} days remaining" if remaining is not None
+                else "demand rate unknown"
+            )
+            lines.append(
+                f"- {name}: {row.get('saleable_stock')} {row.get('unit') or ''} "
+                f"saleable stock; {remaining_text}; status "
+                f"{row.get('stock_status')}."
+            )
+        elif intent == "dead_stock":
+            lines.append(
+                f"- {name}: {row.get('current_stock')} {row.get('unit') or ''} "
+                f"on hand; no recorded sales for {row.get('days_without_recorded_sales')} "
+                f"days; estimated stock value {row.get('estimated_stock_value')}."
+            )
+        elif intent in {"fast_moving", "slow_moving"}:
+            lines.append(
+                f"- {name}: {row.get('units_sold')} {row.get('unit') or ''} "
+                f"sold; average {row.get('average_daily_sales')} per day; "
+                f"current recorded stock {row.get('current_stock')}."
+            )
+        elif intent == "expiry":
+            state = "expired" if row.get("is_expired") else "not yet expired"
+            lines.append(
+                f"- {name}, batch {row.get('batch_number')}: "
+                f"{row.get('quantity')} {row.get('unit') or ''}; "
+                f"expiry {row.get('expiry_date')} ({state}); "
+                f"verified: {row.get('is_verified')}."
+            )
+
+    return "\\n".join(lines)
