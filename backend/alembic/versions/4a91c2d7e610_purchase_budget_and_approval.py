@@ -15,7 +15,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("shop_id", sa.Integer(), sa.ForeignKey("shops.id", ondelete="CASCADE"), nullable=False),
         sa.Column("available_amount", sa.Numeric(14, 2), nullable=False, server_default="0"),
-        sa.Column("currency", sa.Integer(), nullable=False, server_default="356"),
+        sa.Column("currency", sa.String(3), nullable=False, server_default="INR"),
         sa.Column("updated_by_user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
