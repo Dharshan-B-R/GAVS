@@ -141,7 +141,7 @@ class _AuthGateState extends State<AuthGate> {
     }
     if (role == 'admin') {
       return RoleLandingScreen(title: 'Administration',
-        subtitle: 'Signed in as ' + identity,
+        subtitle: 'Signed in as $identity',
         description: 'Administrator access is separate from shop-owner access. Admin tools will be enabled here.',
         onLogout: _onLogout);
     }
