@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from app.models.batch_verification import BatchVerification
@@ -125,6 +127,41 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Legacy endpoints that expose cross-shop data are intentionally disabled.
+# Phase 1 uses the tenant-scoped /shops/{shop_id}/... APIs instead.
+@app.middleware("http")
+async def block_unscoped_legacy_endpoints(request: Request, call_next):
+    path = request.url.path
+    blocked = (
+        path == "/stock-movements"
+        or path.startswith("/inventory/saleable-stock/")
+        or path == "/inventory/reconcile-batches"
+        or path.startswith("/expiry-records")
+        or path == "/suppliers"
+        or path.startswith("/suppliers/")
+        or path == "/customers"
+        or path.startswith("/customers/")
+        or path.startswith("/khata")
+        or path == "/finance/summary"
+        or path.startswith("/analytics/sales/")
+        or path in {"/agents/sales/chat", "/agents/inventory/chat"}
+        or path == "/test/create-expired-batch"
+        or path.startswith("/purchases/")
+        or (
+            path.startswith("/inventory/")
+            and path not in {"/inventory/summary", "/inventory/restock-recommendations"}
+        )
+    )
+    if blocked:
+        return JSONResponse(
+            status_code=410,
+            content={
+                "detail": "This legacy endpoint is disabled because it is not tenant-scoped. Use the authenticated shop-specific API.",
+            },
+        )
+    return await call_next(request)
 
 
 @app.get("/")
