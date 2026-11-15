@@ -26,7 +26,7 @@ def match_product_name(query: str, candidates: Iterable[dict], threshold: float 
     if not 0.5 <= threshold <= 1:
         raise ValueError("Threshold must be between 0.5 and 1.")
 
-    ranked = []
+    best_by_product = {}
     for candidate in candidates:
         names = [candidate.get("canonical_name", ""), candidate.get("alias", "")]
         best = max(
@@ -35,14 +35,21 @@ def match_product_name(query: str, candidates: Iterable[dict], threshold: float 
             default=0.0,
         )
         if best >= threshold:
-            ranked.append({
-                "product_id": candidate["product_id"],
+            product_id = candidate["product_id"]
+            match = {
+                "product_id": product_id,
                 "canonical_name": candidate["canonical_name"],
                 "confidence": round(best, 4),
                 "match_type": "exact" if best == 1 else "fuzzy",
                 "requires_confirmation": best != 1,
-            })
-    ranked.sort(key=lambda item: (-item["confidence"], item["product_id"]))
+            }
+            previous = best_by_product.get(product_id)
+            if previous is None or match["confidence"] > previous["confidence"]:
+                best_by_product[product_id] = match
+    ranked = sorted(
+        best_by_product.values(),
+        key=lambda item: (-item["confidence"], item["product_id"]),
+    )
     return {
         "query": query,
         "normalized_query": normalized,
