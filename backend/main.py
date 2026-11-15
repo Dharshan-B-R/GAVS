@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from app.models.batch_verification import BatchVerification
 from app.models.supplier import Supplier
+from app.models.shop_distributor_connection import ShopDistributorConnection
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.purchase_payment import PurchasePayment
@@ -3216,6 +3217,8 @@ def get_supplier_by_id(
 @app.post("/purchases", response_model=PurchaseResponse)
 def create_purchase(
     purchase_data: PurchaseCreate,
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
     db: Session = Depends(get_db)
 ):
     try:
@@ -3230,6 +3233,13 @@ def create_purchase(
                 status_code=404,
                 detail="Active supplier not found"
             )
+        connection = db.query(ShopDistributorConnection).filter(
+            ShopDistributorConnection.shop_id == shop_id,
+            ShopDistributorConnection.supplier_id == supplier.id,
+            ShopDistributorConnection.is_active.is_(True),
+        ).first()
+        if connection is None:
+            raise HTTPException(409, "Supplier is not connected to this shop")
 
         # 2. Validate purchase items
         total_amount = 0
@@ -3239,6 +3249,7 @@ def create_purchase(
 
             product = db.query(Product).filter(
                 Product.id == item.product_id,
+                Product.shop_id == shop_id,
                 Product.is_active == True
             ).with_for_update().first()
 
@@ -3303,6 +3314,7 @@ def create_purchase(
 
         # 3. Create purchase invoice
         purchase = Purchase(
+            shop_id=shop_id,
             supplier_id=supplier.id,
             invoice_number=purchase_data.invoice_number,
             total_amount=total_amount,
