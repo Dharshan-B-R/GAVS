@@ -42,7 +42,7 @@ class KiranaAIApp extends StatelessWidget {
 
       ),
 
-      home: const KiranaHomePage(),
+      home: const AuthGate(),
 
     );
 
@@ -51,6 +51,188 @@ class KiranaAIApp extends StatelessWidget {
 }
 
 
+
+class AuthGate extends StatefulWidget {
+  const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  bool _checking = true;
+  bool _signedIn = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreSession();
+  }
+
+  Future<void> _restoreSession() async {
+    try {
+      if (await ApiService.hasAccessToken()) {
+        final shops = await ApiService.refreshMyShops();
+        if (shops.isNotEmpty) {
+          if (mounted) setState(() => _signedIn = true);
+        } else {
+          await ApiService.logout();
+        }
+      }
+    } catch (error) {
+      await ApiService.logout();
+      _error = error.toString();
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  void _onLogin() => setState(() { _signedIn = true; _error = null; });
+
+  Future<void> _onLogout() async {
+    await ApiService.logout();
+    if (mounted) setState(() => _signedIn = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_checking) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (!_signedIn) {
+      return LoginScreen(onLogin: _onLogin, initialError: _error);
+    }
+    return KiranaHomePage(onLogout: _onLogout);
+  }
+}
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key, required this.onLogin, this.initialError});
+  final VoidCallback onLogin;
+  final String? initialError;
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  bool _busy = false;
+  bool _obscure = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _error = widget.initialError;
+  }
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() { _busy = true; _error = null; });
+    try {
+      await ApiService.login(email: _email.text.trim(), password: _password.text);
+      if (mounted) widget.onLogin();
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Icon(Icons.storefront, size: 56, color: Color(0xFF16845B)),
+                      const SizedBox(height: 12),
+                      const Text('KiranaAI', textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 6),
+                      const Text('Sign in to manage your shop', textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.black54)),
+                      const SizedBox(height: 24),
+                      TextFormField(
+                        controller: _email,
+                        keyboardType: TextInputType.emailAddress,
+                        autofillHints: const [AutofillHints.username, AutofillHints.email],
+                        decoration: const InputDecoration(
+                          labelText: 'Email',
+                          prefixIcon: Icon(Icons.email_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (value) => value == null || !value.contains('@')
+                            ? 'Enter a valid email' : null,
+                      ),
+                      const SizedBox(height: 14),
+                      TextFormField(
+                        controller: _password,
+                        obscureText: _obscure,
+                        autofillHints: const [AutofillHints.password],
+                        decoration: InputDecoration(
+                          labelText: 'Password',
+                          prefixIcon: const Icon(Icons.lock_outline),
+                          border: const OutlineInputBorder(),
+                          suffixIcon: IconButton(
+                            onPressed: () => setState(() => _obscure = !_obscure),
+                            icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+                          ),
+                        ),
+                        validator: (value) => value == null || value.isEmpty
+                            ? 'Enter your password' : null,
+                        onFieldSubmitted: (_) { if (!_busy) _submit(); },
+                      ),
+                      if (_error != null) ...[
+                        const SizedBox(height: 12),
+                        Text(_error!, style: const TextStyle(color: Colors.red)),
+                      ],
+                      const SizedBox(height: 20),
+                      FilledButton(
+                        onPressed: _busy ? null : _submit,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: _busy
+                              ? const SizedBox(height: 20, width: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Text('Sign in'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 /// Represents a product returned by the FastAPI backend.
 
@@ -134,7 +316,9 @@ class Product {
 
 class KiranaHomePage extends StatefulWidget {
 
-  const KiranaHomePage({super.key});
+  const KiranaHomePage({super.key, required this.onLogout});
+
+  final Future<void> Function() onLogout;
 
 
 
@@ -2104,7 +2288,14 @@ if (showMessage) {
 
         const SizedBox(height: 20),
 
-
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.logout, color: Colors.red),
+            title: const Text('Sign out'),
+            subtitle: const Text('Securely end this session'),
+            onTap: widget.onLogout,
+          ),
+        ),
 
         const Card(
 
