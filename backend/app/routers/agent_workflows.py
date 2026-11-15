@@ -155,6 +155,7 @@ def orchestrate_question(
         elif agent == "supplier":
             results["suppliers"] = compare_suppliers(db, shop_id)
             results["supplier_prices"] = compare_supplier_prices(db, shop_id)
+            results["supplier_prices"] = compare_supplier_prices(db, shop_id)
         elif agent == "budget":
             from app.models.shop_purchase_budget import ShopPurchaseBudget
             budget = db.query(ShopPurchaseBudget).filter(ShopPurchaseBudget.shop_id == shop_id).first()
