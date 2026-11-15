@@ -34,6 +34,7 @@ class ApiService {
       FlutterSecureStorage();
 
   static const String _tokenKey = 'kiranaai_access_token';
+  static const String _activeShopKey = 'kiranaai_active_shop_id';
 
   /// FUNCTION: Build headers for authenticated API requests.
   /// Purpose: Add the saved bearer token when the user is logged in.
@@ -88,6 +89,7 @@ class ApiService {
       }
 
       await _secureStorage.write(key: _tokenKey, value: token);
+      await refreshMyShops();
 
       return responseData;
     }
@@ -120,6 +122,66 @@ class ApiService {
   /// Purpose: Remove the saved access token from secure storage.
   static Future<void> logout() async {
     await _secureStorage.delete(key: _tokenKey);
+    await _secureStorage.delete(key: _activeShopKey);
+  }
+
+  /// Returns the authenticated user's active shop memberships.
+  static Future<List<Map<String, dynamic>>> getMyShops() async {
+    final response = await http
+        .get(
+          Uri.parse('$baseUrl/auth/shops'),
+          headers: await _authorizedHeaders(),
+        )
+        .timeout(timeoutDuration);
+
+    if (response.statusCode == 200) {
+      return (jsonDecode(response.body) as List<dynamic>)
+          .map((item) => item as Map<String, dynamic>)
+          .toList();
+    }
+    if (response.statusCode == 401) {
+      await logout();
+      throw Exception('Your session has expired. Please log in again.');
+    }
+    throw Exception('Unable to load your shops: ${response.body}');
+  }
+
+  /// Loads memberships and selects the saved shop, or the first active shop.
+  static Future<List<Map<String, dynamic>>> refreshMyShops() async {
+    final shops = await getMyShops();
+    final savedId = await _secureStorage.read(key: _activeShopKey);
+    final savedIsValid = savedId != null && shops.any(
+      (shop) => shop['shop_id'].toString() == savedId,
+    );
+    if (!savedIsValid) {
+      if (shops.isEmpty) {
+        await _secureStorage.delete(key: _activeShopKey);
+      } else {
+        await setActiveShop((shops.first['shop_id'] as num).toInt());
+      }
+    }
+    return shops;
+  }
+
+  /// Stores a shop only if the authenticated user has an active membership.
+  static Future<void> setActiveShop(int shopId) async {
+    final shops = await getMyShops();
+    final allowed = shops.any(
+      (shop) => (shop['shop_id'] as num).toInt() == shopId,
+    );
+    if (!allowed) {
+      throw Exception('You do not have access to the selected shop.');
+    }
+    await _secureStorage.write(key: _activeShopKey, value: shopId.toString());
+  }
+
+  static Future<int> _requireActiveShopId() async {
+    final value = await _secureStorage.read(key: _activeShopKey);
+    final shopId = int.tryParse(value ?? '');
+    if (shopId == null || shopId <= 0) {
+      throw Exception('No active shop selected. Please sign in again.');
+    }
+    return shopId;
   }
 
   /// FUNCTION: Get the currently authenticated user.
@@ -168,9 +230,13 @@ class ApiService {
   /// Endpoint: /products
   /// Purpose: Retrieve products from the backend database.
   static Future<List<dynamic>> getProducts() async {
+    final shopId = await _requireActiveShopId();
+    final uri = Uri.parse('$baseUrl/products').replace(
+      queryParameters: {'shop_id': shopId.toString()},
+    );
     final response = await http
         .get(
-          Uri.parse('$baseUrl/products'),
+          uri,
           headers: await _authorizedHeaders(),
         )
         .timeout(timeoutDuration);
@@ -189,9 +255,13 @@ class ApiService {
   /// Endpoint: /inventory/summary
   /// Purpose: Retrieve inventory dashboard statistics.
   static Future<Map<String, dynamic>> getInventorySummary() async {
+    final shopId = await _requireActiveShopId();
+    final uri = Uri.parse('$baseUrl/inventory/summary').replace(
+      queryParameters: {'shop_id': shopId.toString()},
+    );
     final response = await http
         .get(
-          Uri.parse('$baseUrl/inventory/summary'),
+          uri,
           headers: await _authorizedHeaders(),
         )
         .timeout(timeoutDuration);
@@ -213,10 +283,12 @@ class ApiService {
     int days = 30,
     int warningDays = 7,
   }) async {
+    final shopId = await _requireActiveShopId();
     final uri = Uri.parse(
       '$baseUrl/inventory/restock-recommendations',
     ).replace(
       queryParameters: {
+        'shop_id': shopId.toString(),
         'days': days.toString(),
         'warning_days': warningDays.toString(),
       },
@@ -245,9 +317,13 @@ class ApiService {
   static Future<Map<String, dynamic>> addProduct(
     Map<String, dynamic> productData,
   ) async {
+    final shopId = await _requireActiveShopId();
+    final uri = Uri.parse('$baseUrl/products').replace(
+      queryParameters: {'shop_id': shopId.toString()},
+    );
     final response = await http
         .post(
-          Uri.parse('$baseUrl/products'),
+          uri,
           headers: await _authorizedHeaders(jsonContent: true),
           body: jsonEncode(productData),
         )
@@ -268,9 +344,13 @@ class ApiService {
     int productId,
     Map<String, dynamic> productData,
   ) async {
+    final shopId = await _requireActiveShopId();
+    final uri = Uri.parse('$baseUrl/products/$productId').replace(
+      queryParameters: {'shop_id': shopId.toString()},
+    );
     final response = await http
         .put(
-          Uri.parse('$baseUrl/products/$productId'),
+          uri,
           headers: await _authorizedHeaders(jsonContent: true),
           body: jsonEncode(productData),
         )
@@ -288,9 +368,13 @@ class ApiService {
   /// Endpoint: /products/{productId}
   /// Purpose: Delete a product from the backend database.
   static Future<void> deleteProduct(int productId) async {
+    final shopId = await _requireActiveShopId();
+    final uri = Uri.parse('$baseUrl/products/$productId').replace(
+      queryParameters: {'shop_id': shopId.toString()},
+    );
     final response = await http
         .delete(
-          Uri.parse('$baseUrl/products/$productId'),
+          uri,
           headers: await _authorizedHeaders(),
         )
         .timeout(timeoutDuration);
