@@ -1,21 +1,152 @@
-import 'package:flutter/foundation.dart';
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 /// ---------------------------------------------------------
 /// SERVICE: KiranaAI API Service
 /// Purpose:
 /// Centralise communication between Flutter and FastAPI.
+/// Handle login, secure token storage and authenticated requests.
 /// ---------------------------------------------------------
 
 class ApiService {
-  // Android emulator: use http://10.0.2.2:8000
-  // Chrome / Windows: use http://127.0.0.1:8000
-  static const String baseUrl = 'http://127.0.0.1:8000';
+  // Android emulator: use http://10.0.2.2:8000.
+  // Chrome / Windows: use http://127.0.0.1:8000.
+  static String get baseUrl {
+    if (kIsWeb) {
+      return 'http://127.0.0.1:8000';
+    }
+
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return 'http://10.0.2.2:8000';
+      default:
+        return 'http://127.0.0.1:8000';
+    }
+  }
 
   static const Duration timeoutDuration = Duration(seconds: 15);
 
-  /// FUNCTION: Check Backend Connection
+  // Secure storage keeps the access token outside ordinary application preferences.
+  static const FlutterSecureStorage _secureStorage =
+      FlutterSecureStorage();
+
+  static const String _tokenKey = 'kiranaai_access_token';
+
+  /// FUNCTION: Build headers for authenticated API requests.
+  /// Purpose: Add the saved bearer token when the user is logged in.
+  static Future<Map<String, String>> _authorizedHeaders({
+    bool jsonContent = false,
+  }) async {
+    final headers = <String, String>{};
+
+    if (jsonContent) {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    final token = await _secureStorage.read(key: _tokenKey);
+
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+
+    return headers;
+  }
+
+  /// FUNCTION: Log in a user.
+  /// Method: POST
+  /// Endpoint: /auth/login
+  /// Purpose: Verify email and password, then securely save the access token.
+  /// Note: The FastAPI endpoint expects form fields named username and password.
+  static Future<Map<String, dynamic>> login({
+    required String email,
+    required String password,
+  }) async {
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/auth/login'),
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+          },
+          body: {
+            'username': email.trim().toLowerCase(),
+            'password': password,
+          },
+        )
+        .timeout(timeoutDuration);
+
+    if (response.statusCode == 200) {
+      final responseData =
+          jsonDecode(response.body) as Map<String, dynamic>;
+      final token = responseData['access_token'] as String?;
+
+      if (token == null || token.isEmpty) {
+        throw Exception('The server did not return an access token.');
+      }
+
+      await _secureStorage.write(key: _tokenKey, value: token);
+
+      return responseData;
+    }
+
+    if (response.statusCode == 401) {
+      throw Exception('Incorrect email or password.');
+    }
+
+    if (response.statusCode == 403) {
+      throw Exception('This account is inactive.');
+    }
+
+    throw Exception('Login failed: ${response.body}');
+  }
+
+  /// FUNCTION: Get the current saved access token.
+  /// Purpose: Read the login token from secure storage.
+  static Future<String?> getAccessToken() async {
+    return _secureStorage.read(key: _tokenKey);
+  }
+
+  /// FUNCTION: Check whether a login token is stored.
+  /// Purpose: Help the app decide whether a login screen is needed.
+  static Future<bool> hasAccessToken() async {
+    final token = await getAccessToken();
+    return token != null && token.isNotEmpty;
+  }
+
+  /// FUNCTION: Log out the current user.
+  /// Purpose: Remove the saved access token from secure storage.
+  static Future<void> logout() async {
+    await _secureStorage.delete(key: _tokenKey);
+  }
+
+  /// FUNCTION: Get the currently authenticated user.
+  /// Method: GET
+  /// Endpoint: /auth/me
+  /// Purpose: Validate the saved token and retrieve the user's latest details.
+  static Future<Map<String, dynamic>> getCurrentUser() async {
+    final response = await http
+        .get(
+          Uri.parse('$baseUrl/auth/me'),
+          headers: await _authorizedHeaders(),
+        )
+        .timeout(timeoutDuration);
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+
+    if (response.statusCode == 401) {
+      await logout();
+      throw Exception('Your session has expired. Please log in again.');
+    }
+
+    throw Exception('Unable to load user details: ${response.body}');
+  }
+
+  /// FUNCTION: Check Backend Connection.
   /// Method: GET
   /// Endpoint: /health
   /// Purpose: Verify that the FastAPI backend is running.
@@ -32,13 +163,16 @@ class ApiService {
     }
   }
 
-  /// FUNCTION: Get All Products
+  /// FUNCTION: Get All Products.
   /// Method: GET
   /// Endpoint: /products
-  /// Purpose: Retrieve all active products from PostgreSQL.
+  /// Purpose: Retrieve products from the backend database.
   static Future<List<dynamic>> getProducts() async {
     final response = await http
-        .get(Uri.parse('$baseUrl/products'))
+        .get(
+          Uri.parse('$baseUrl/products'),
+          headers: await _authorizedHeaders(),
+        )
         .timeout(timeoutDuration);
 
     if (response.statusCode == 200) {
@@ -50,13 +184,16 @@ class ApiService {
     );
   }
 
-  /// FUNCTION: Get Inventory Summary
+  /// FUNCTION: Get Inventory Summary.
   /// Method: GET
   /// Endpoint: /inventory/summary
   /// Purpose: Retrieve inventory dashboard statistics.
   static Future<Map<String, dynamic>> getInventorySummary() async {
     final response = await http
-        .get(Uri.parse('$baseUrl/inventory/summary'))
+        .get(
+          Uri.parse('$baseUrl/inventory/summary'),
+          headers: await _authorizedHeaders(),
+        )
         .timeout(timeoutDuration);
 
     if (response.statusCode == 200) {
@@ -68,7 +205,7 @@ class ApiService {
     );
   }
 
-  /// FUNCTION: Get Smart Restock Recommendations
+  /// FUNCTION: Get Smart Restock Recommendations.
   /// Method: GET
   /// Endpoint: /inventory/restock-recommendations
   /// Purpose: Retrieve stock coverage and suggested reorder quantities.
@@ -86,7 +223,10 @@ class ApiService {
     );
 
     final response = await http
-        .get(uri)
+        .get(
+          uri,
+          headers: await _authorizedHeaders(),
+        )
         .timeout(timeoutDuration);
 
     if (response.statusCode == 200) {
@@ -98,7 +238,7 @@ class ApiService {
     );
   }
 
-  /// FUNCTION: Add New Product
+  /// FUNCTION: Add New Product.
   /// Method: POST
   /// Endpoint: /products
   /// Purpose: Create a product in the backend database.
@@ -108,7 +248,7 @@ class ApiService {
     final response = await http
         .post(
           Uri.parse('$baseUrl/products'),
-          headers: {'Content-Type': 'application/json'},
+          headers: await _authorizedHeaders(jsonContent: true),
           body: jsonEncode(productData),
         )
         .timeout(timeoutDuration);
@@ -117,12 +257,10 @@ class ApiService {
       return jsonDecode(response.body) as Map<String, dynamic>;
     }
 
-    throw Exception(
-      'Unable to add product: ${response.body}',
-    );
+    throw Exception('Unable to add product: ${response.body}');
   }
 
-  /// FUNCTION: Update Existing Product
+  /// FUNCTION: Update Existing Product.
   /// Method: PUT
   /// Endpoint: /products/{productId}
   /// Purpose: Update product details in the backend database.
@@ -133,7 +271,7 @@ class ApiService {
     final response = await http
         .put(
           Uri.parse('$baseUrl/products/$productId'),
-          headers: {'Content-Type': 'application/json'},
+          headers: await _authorizedHeaders(jsonContent: true),
           body: jsonEncode(productData),
         )
         .timeout(timeoutDuration);
@@ -142,24 +280,23 @@ class ApiService {
       return jsonDecode(response.body) as Map<String, dynamic>;
     }
 
-    throw Exception(
-      'Unable to update product: ${response.body}',
-    );
+    throw Exception('Unable to update product: ${response.body}');
   }
 
-  /// FUNCTION: Delete Product
+  /// FUNCTION: Delete Product.
   /// Method: DELETE
   /// Endpoint: /products/{productId}
   /// Purpose: Delete a product from the backend database.
   static Future<void> deleteProduct(int productId) async {
     final response = await http
-        .delete(Uri.parse('$baseUrl/products/$productId'))
+        .delete(
+          Uri.parse('$baseUrl/products/$productId'),
+          headers: await _authorizedHeaders(),
+        )
         .timeout(timeoutDuration);
 
     if (response.statusCode != 200) {
-      throw Exception(
-        'Unable to delete product: ${response.body}',
-      );
+      throw Exception('Unable to delete product: ${response.body}');
     }
   }
 }
