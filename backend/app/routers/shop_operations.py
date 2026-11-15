@@ -17,6 +17,9 @@ from app.models.sale import Sale
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.product import Product
+from app.models.product_alias import ProductAlias
+from app.services.product_name_intelligence_service import normalize_product_name, match_product_name
+from sqlalchemy.exc import IntegrityError
 from app.models.product_batch import ProductBatch
 from app.models.stock_movement import StockMovement
 from app.models.batch_verification import BatchVerification
@@ -27,6 +30,16 @@ router = APIRouter(tags=["Shop Operations and Supplier Workspace"])
 
 class SupplierConnectionInput(BaseModel):
     supplier_id: int = Field(gt=0)
+
+
+class ProductAliasInput(BaseModel):
+    product_id: int = Field(gt=0)
+    alias: str = Field(min_length=1, max_length=180)
+    source: str = Field(default="owner", max_length=30)
+
+
+class ProductNameMatchInput(BaseModel):
+    name: str = Field(min_length=1, max_length=180)
 
 
 @router.get("/shops/{shop_id}/employees")
@@ -539,3 +552,118 @@ def create_opening_batch_for_legacy_stock(
         "is_verified": False,
         "message": "Opening batch created. Verify its physical quantity before selling.",
     }
+
+
+
+@router.get("/shops/{shop_id}/product-aliases")
+def list_product_aliases(
+    shop_id: int,
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    rows = db.query(ProductAlias, Product).join(
+        Product, Product.id == ProductAlias.product_id
+    ).filter(
+        ProductAlias.shop_id == shop_id,
+        Product.shop_id == shop_id,
+        Product.is_active.is_(True),
+    ).order_by(ProductAlias.alias.asc()).all()
+    return [{
+        "id": alias.id,
+        "product_id": product.id,
+        "product_name": product.name,
+        "alias": alias.alias,
+        "normalized_alias": alias.normalized_alias,
+        "source": alias.source,
+    } for alias, product in rows]
+
+
+@router.post("/shops/{shop_id}/product-aliases", status_code=201)
+def create_product_alias(
+    shop_id: int,
+    payload: ProductAliasInput,
+    membership=Depends(require_shop_owner),
+    db: Session = Depends(get_db),
+):
+    product = db.query(Product).filter(
+        Product.id == payload.product_id,
+        Product.shop_id == shop_id,
+        Product.is_active.is_(True),
+    ).first()
+    if product is None:
+        raise HTTPException(404, "Active product not found in this shop")
+    normalized = normalize_product_name(payload.alias)
+    if not normalized:
+        raise HTTPException(422, "Alias must contain letters or numbers")
+    alias = ProductAlias(
+        shop_id=shop_id,
+        product_id=product.id,
+        alias=payload.alias.strip(),
+        normalized_alias=normalized,
+        source=payload.source.strip().lower() or "owner",
+    )
+    db.add(alias)
+    try:
+        db.commit()
+        db.refresh(alias)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "This alias is already registered for this shop")
+    return {
+        "id": alias.id,
+        "shop_id": shop_id,
+        "product_id": product.id,
+        "product_name": product.name,
+        "alias": alias.alias,
+        "normalized_alias": alias.normalized_alias,
+    }
+
+
+@router.delete("/shops/{shop_id}/product-aliases/{alias_id}")
+def delete_product_alias(
+    shop_id: int,
+    alias_id: int,
+    membership=Depends(require_shop_owner),
+    db: Session = Depends(get_db),
+):
+    alias = db.query(ProductAlias).filter(
+        ProductAlias.id == alias_id,
+        ProductAlias.shop_id == shop_id,
+    ).first()
+    if alias is None:
+        raise HTTPException(404, "Product alias not found")
+    db.delete(alias)
+    db.commit()
+    return {"deleted": True, "alias_id": alias_id}
+
+
+@router.post("/shops/{shop_id}/product-name-matches")
+def find_product_name_matches(
+    shop_id: int,
+    payload: ProductNameMatchInput,
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    products = db.query(Product).filter(
+        Product.shop_id == shop_id,
+        Product.is_active.is_(True),
+    ).all()
+    aliases = db.query(ProductAlias).filter(
+        ProductAlias.shop_id == shop_id,
+    ).all()
+    alias_by_product = {}
+    for alias in aliases:
+        alias_by_product.setdefault(alias.product_id, []).append(alias.alias)
+    candidates = []
+    for product in products:
+        candidates.append({
+            "product_id": product.id,
+            "canonical_name": product.name,
+            "alias": "",
+        })
+        candidates.extend({
+            "product_id": product.id,
+            "canonical_name": product.name,
+            "alias": alias,
+        } for alias in alias_by_product.get(product.id, []))
+    return match_product_name(payload.name, candidates)
