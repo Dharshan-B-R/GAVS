@@ -35,6 +35,7 @@ model_modules = [
     "app.models.expiry_record",
     "app.models.khata_transaction",
     "app.models.product",
+    "app.models.product_alias",
     "app.models.product_batch",
     "app.models.purchase",
     "app.models.purchase_item",
