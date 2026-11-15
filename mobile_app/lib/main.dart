@@ -495,11 +495,43 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   @override
 
   void initState() {
-
     super.initState();
-
     loadBackendData();
+    _loadMyShops();
+  }
 
+  Future<void> _loadMyShops() async {
+    try {
+      final shops = await ApiService.refreshMyShops();
+      final active = await ApiService.getActiveShop();
+      if (mounted) setState(() {
+        _myShops = shops;
+        _activeShopId = (active?['shop_id'] as num?)?.toInt();
+        _activeShopName = active?['name']?.toString();
+      });
+    } catch (error) {
+      if (mounted) showSnackBar('Could not load shop memberships: $error', isError: true);
+    }
+  }
+
+  Future<void> _switchShop(int shopId) async {
+    try {
+      await ApiService.setActiveShop(shopId);
+      final active = await ApiService.getActiveShop();
+      if (mounted) setState(() {
+        _activeShopId = shopId;
+        _activeShopName = active?['name']?.toString();
+        products.clear();
+        inventorySummary = {};
+        restockRecommendations.clear();
+        selectedRestockProducts.clear();
+      });
+      await loadBackendData();
+      await loadRestockRecommendations();
+      if (mounted) showSnackBar('Switched to ${active?['name'] ?? 'selected shop'}.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not switch shop: $error', isError: true);
+    }
   }
 
 
@@ -509,11 +541,13 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   @override
 
   void dispose() {
-
     searchController.dispose();
-
+    _saleQuantityController.dispose();
+    _aiQuestionController.dispose();
+    _budgetController.dispose();
+    _supplierIdController.dispose();
+    _employeeEmailController.dispose();
     super.dispose();
-
   }
 
 
@@ -1015,7 +1049,7 @@ if (showMessage) {
 
       floatingActionButton: FloatingActionButton.extended(
 
-        onPressed: showVoiceAssistant,
+        onPressed: () => setState(() => selectedIndex = 4),
 
         backgroundColor: const Color(0xFF16845B),
 
@@ -2881,7 +2915,7 @@ if (showMessage) {
 
             leading: const Icon(Icons.store),
 
-            title: Text(widget.shopName),
+            title: Text(_activeShopName ?? widget.shopName),
 
             subtitle: Text('Signed in as ${widget.userRole}'),
 
@@ -2922,6 +2956,20 @@ if (showMessage) {
             ],
           ))),
         ],
+
+        if (_myShops.length > 1)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: DropdownButtonFormField<int>(
+              value: _activeShopId,
+              decoration: const InputDecoration(labelText: 'Active shop', border: OutlineInputBorder()),
+              items: _myShops.map((shop) => DropdownMenuItem<int>(
+                value: (shop['shop_id'] as num).toInt(),
+                child: Text(shop['name'].toString()),
+              )).toList(),
+              onChanged: (value) { if (value != null) _switchShop(value); },
+            ),
+          ),
 
         const Card(
 
