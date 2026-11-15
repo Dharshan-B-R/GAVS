@@ -2682,17 +2682,6 @@ if (showMessage) {
                         label: const Text('Create proposal for owner approval'),
                       ),
                     ),
-                    if (widget.userRole == 'owner' && purchasePlanApproved)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 10),
-                        child: Text(
-                          'Proposal created. Owner approval is required before an internal order can be created.',
-                          style: TextStyle(
-                            color: Colors.green,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
                     const SizedBox(height: 8),
                     if (widget.userRole == 'owner') const Text(
                       'Creating a proposal does not place an order. Approve it first, then create an internal purchase order.',
