@@ -3,7 +3,7 @@
 This service is deliberately deterministic: it reports recorded exposure and loss,
 not speculative spoilage or sales that might have occurred.
 """
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, timedelta
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -73,19 +73,41 @@ def analyze_expiry_risk(
             ),
         })
 
-    loss_rows = (
+    # Only completed, owner-approved disposals count as realized loss.
+    # Pending requests reserve stock but are not completed losses. Supplier
+    # returns recover inventory and are tracked separately as recorded credits.
+    disposal_rows = (
         db.query(
             func.coalesce(func.sum(ExpiryRecord.quantity * ProductBatch.purchase_price), 0),
-            func.coalesce(func.sum(ExpiryRecord.credit_amount), 0),
             func.count(ExpiryRecord.id),
         )
         .join(ProductBatch, ProductBatch.id == ExpiryRecord.batch_id)
         .join(Product, Product.id == ProductBatch.product_id)
-        .filter(Product.shop_id == shop_id, Product.is_active.is_(True))
+        .filter(
+            Product.shop_id == shop_id,
+            Product.is_active.is_(True),
+            ExpiryRecord.action == "disposal",
+            ExpiryRecord.approval_status == "approved",
+            ExpiryRecord.action_status == "completed",
+        )
         .one()
     )
-    recorded_gross_loss = float(loss_rows[0] or 0)
-    recorded_supplier_credits = float(loss_rows[1] or 0)
+    credit_total = (
+        db.query(func.coalesce(func.sum(ExpiryRecord.credit_amount), 0))
+        .join(ProductBatch, ProductBatch.id == ExpiryRecord.batch_id)
+        .join(Product, Product.id == ProductBatch.product_id)
+        .filter(
+            Product.shop_id == shop_id,
+            Product.is_active.is_(True),
+            ExpiryRecord.action == "supplier_return",
+            ExpiryRecord.action_status == "completed",
+            ExpiryRecord.return_status == "credited",
+            ExpiryRecord.credit_amount.isnot(None),
+        )
+        .scalar()
+    )
+    recorded_gross_loss = float(disposal_rows[0] or 0)
+    recorded_supplier_credits = float(credit_total or 0)
 
     return {
         "analysis": "expiry_risk",
@@ -96,7 +118,7 @@ def analyze_expiry_risk(
         "at_risk_batch_count": len(batches),
         "total_at_risk_quantity": round(total_at_risk_quantity, 3),
         "estimated_cost_exposure": round(estimated_cost_exposure, 2),
-        "recorded_expiry_action_count": int(loss_rows[2] or 0),
+        "recorded_expiry_action_count": int(disposal_rows[1] or 0),
         "recorded_gross_expiry_loss": round(recorded_gross_loss, 2),
         "recorded_supplier_credits": round(recorded_supplier_credits, 2),
         "recorded_net_expiry_loss": round(max(0.0, recorded_gross_loss - recorded_supplier_credits), 2),
