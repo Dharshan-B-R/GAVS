@@ -279,11 +279,11 @@ def delete_product(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    db.delete(product)
+    product.is_active = False
     db.commit()
 
     return {
-        "message": "Product deleted successfully!"
+        "message": "Product archived successfully. Historical sales and stock records were preserved."
     }
 
 
