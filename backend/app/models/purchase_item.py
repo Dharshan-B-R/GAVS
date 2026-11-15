@@ -39,7 +39,7 @@ class PurchaseItem(Base):
         index=True
     )
 
-    quantity = Column(Integer, nullable=False)
+    quantity = Column(Float, nullable=False)
 
     unit_price = Column(Float, nullable=False)
 
