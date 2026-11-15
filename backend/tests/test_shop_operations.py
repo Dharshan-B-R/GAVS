@@ -170,3 +170,95 @@ def test_supplier_can_only_confirm_own_purchase_order(client, db_session):
     assert confirmed.status_code == 200
     db_session.refresh(purchase)
     assert purchase.status == "confirmed"
+
+
+
+def test_owner_approval_purchase_order_supplier_confirmation_and_receipt(client, db_session):
+    owner = register_owner(client, "full-flow-owner@example.com")
+    shop_id = owner["shop"]["id"]
+    supplier_response = client.post("/auth/register/distributor", json={
+        "full_name": "Full Flow Supplier",
+        "email": "full-flow-supplier@example.com",
+        "password": "SupplierPass@123",
+        "business_name": "Full Flow Wholesale",
+    })
+    supplier_id = supplier_response.json()["supplier"]["id"]
+    assert client.post(
+        f"/shops/{shop_id}/distributors",
+        headers=auth(owner["access_token"]),
+        json={"supplier_id": supplier_id},
+    ).status_code == 201
+
+    product = Product(
+        shop_id=shop_id, name="Wheat Flour", quantity=0, minimum_stock=4,
+        purchase_price=30, selling_price=40, unit="kg", is_active=True,
+    )
+    db_session.add(product)
+    db_session.flush()
+
+    budget = client.put(
+        f"/shops/{shop_id}/purchase-budget",
+        headers=auth(owner["access_token"]),
+        json={"available_amount": "1000.00", "currency": "INR"},
+    )
+    assert budget.status_code == 200
+
+    proposal = client.post(
+        f"/shops/{shop_id}/purchase-proposals",
+        headers=auth(owner["access_token"]),
+        json={
+            "supplier_id": supplier_id,
+            "items": [{"product_id": product.id, "quantity": "5", "unit_price": "30"}],
+            "rationale": "Test reorder",
+        },
+    )
+    assert proposal.status_code == 201, proposal.text
+    proposal_id = proposal.json()["proposal_id"]
+
+    approval = client.post(
+        f"/shops/{shop_id}/purchase-proposals/{proposal_id}/decision",
+        headers=auth(owner["access_token"]),
+        json={"approve": True, "note": "Approved by owner"},
+    )
+    assert approval.status_code == 200
+    assert approval.json()["status"] == "approved"
+
+    execution = client.post(
+        f"/shops/{shop_id}/purchase-proposals/{proposal_id}/execute",
+        headers=auth(owner["access_token"]),
+    )
+    assert execution.status_code == 200, execution.text
+    purchase_id = execution.json()["purchase_id"]
+    assert execution.json()["purchase_status"] == "ordered"
+    db_session.refresh(product)
+    assert product.quantity == 0
+    purchase = db_session.query(Purchase).filter_by(id=purchase_id).one()
+    purchase_item = db_session.query(PurchaseItem).filter_by(purchase_id=purchase_id).one()
+    assert purchase.status == "ordered"
+    assert purchase_item.batch_id is None
+
+    supplier_token = supplier_response.json()["access_token"]
+    supplier_orders = client.get("/supplier/orders", headers=auth(supplier_token))
+    assert supplier_orders.status_code == 200
+    assert supplier_orders.json()[0]["purchase_id"] == purchase_id
+
+    confirmation = client.post(
+        f"/supplier/orders/{purchase_id}/confirm",
+        headers=auth(supplier_token),
+    )
+    assert confirmation.status_code == 200
+
+    receipt = client.post(
+        f"/shops/{shop_id}/purchases/{purchase_id}/receive",
+        headers=auth(owner["access_token"]),
+        json={"items": [{
+            "purchase_item_id": purchase_item.id,
+            "batch_number": "WHEAT-2026-01",
+            "expiry_date": "2027-06-30",
+        }]},
+    )
+    assert receipt.status_code == 200, receipt.text
+    db_session.refresh(product)
+    db_session.refresh(purchase)
+    assert product.quantity == 5
+    assert purchase.status == "received"
