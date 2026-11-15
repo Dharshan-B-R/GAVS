@@ -2,6 +2,8 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from datetime import date
+import math
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -13,6 +15,9 @@ from app.models.shop_distributor_connection import ShopDistributorConnection
 from app.models.supplier import Supplier
 from app.models.sale import Sale
 from app.models.purchase import Purchase
+from app.models.product import Product
+from app.models.product_batch import ProductBatch
+from app.models.stock_movement import StockMovement
 
 
 router = APIRouter(tags=["Shop Operations and Supplier Workspace"])
@@ -221,3 +226,90 @@ def confirm_supplier_order(
     purchase.status = "confirmed"
     db.commit()
     return {"purchase_id": purchase.id, "status": purchase.status, "confirmed_at": datetime.now(timezone.utc)}
+
+
+
+class StockAdjustmentInput(BaseModel):
+    product_id: int = Field(gt=0)
+    quantity_change: float
+    reason: str = Field(min_length=3, max_length=255)
+    batch_number: str | None = Field(default=None, max_length=100)
+    expiry_date: date | None = None
+
+
+@router.post("/shops/{shop_id}/inventory/adjustments", status_code=201)
+def adjust_inventory_stock(
+    shop_id: int,
+    payload: StockAdjustmentInput,
+    current_user: User = Depends(get_current_user),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    """Record an audited stock correction while keeping batch totals consistent."""
+    change = float(payload.quantity_change)
+    if not math.isfinite(change) or abs(change) < 0.000001:
+        raise HTTPException(400, "quantity_change must be a finite non-zero number")
+    product = db.query(Product).filter(
+        Product.id == payload.product_id,
+        Product.shop_id == shop_id,
+        Product.is_active.is_(True),
+    ).with_for_update().first()
+    if product is None:
+        raise HTTPException(404, "Active product not found in this shop")
+
+    before = float(product.quantity or 0)
+    if change < 0:
+        reduction = abs(change)
+        if reduction > before + 0.000001:
+            raise HTTPException(409, "Stock reduction exceeds recorded stock")
+        batches = db.query(ProductBatch).filter(
+            ProductBatch.product_id == product.id,
+            ProductBatch.quantity > 0,
+        ).order_by(ProductBatch.expiry_date.asc(), ProductBatch.id.asc()).with_for_update().all()
+        batch_total = sum(float(batch.quantity or 0) for batch in batches)
+        if abs(batch_total - before) > 0.000001:
+            raise HTTPException(409, "Batch quantities do not match product stock. Reconcile batches before adjusting.")
+        remaining = reduction
+        for batch in batches:
+            take = min(float(batch.quantity), remaining)
+            batch.quantity = float(batch.quantity) - take
+            remaining -= take
+            if remaining <= 0.000001:
+                break
+        product.quantity = max(before - reduction, 0)
+    else:
+        if not payload.batch_number or not payload.batch_number.strip() or payload.expiry_date is None:
+            raise HTTPException(422, "Adding stock requires a batch_number and expiry_date")
+        if payload.expiry_date < date.today():
+            raise HTTPException(400, "Cannot add an already expired batch")
+        db.add(ProductBatch(
+            product_id=product.id,
+            batch_number=payload.batch_number.strip(),
+            expiry_date=payload.expiry_date,
+            quantity=change,
+            purchase_price=float(product.purchase_price or 0),
+            is_verified=False,
+        ))
+        product.quantity = before + change
+
+    movement = StockMovement(
+        product_id=product.id,
+        movement_type="adjustment",
+        quantity_change=change,
+        quantity_before=before,
+        quantity_after=float(product.quantity),
+        reason=payload.reason.strip(),
+        performed_by=current_user.id,
+        reference_type="manual_adjustment",
+    )
+    db.add(movement)
+    db.commit()
+    db.refresh(product)
+    return {
+        "product_id": product.id,
+        "quantity_before": before,
+        "quantity_change": change,
+        "quantity_after": float(product.quantity),
+        "batch_verification_required": change > 0,
+        "message": "Stock adjustment recorded with an audit movement.",
+    }
