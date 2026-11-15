@@ -31,6 +31,8 @@ def analyze_event_demand(
         raise ValueError("limit must be between 1 and 100")
 
     event_end = event_start + timedelta(days=window_days)
+    if event_end > date.today() + timedelta(days=1):
+        raise ValueError("Event comparison is descriptive and requires a completed event window")
     baseline_start = event_start - timedelta(days=baseline_days)
     event_start_dt = datetime.combine(event_start, time.min, tzinfo=timezone.utc)
     event_end_dt = datetime.combine(event_end, time.min, tzinfo=timezone.utc)
