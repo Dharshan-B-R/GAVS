@@ -6,7 +6,7 @@ SUPPORTED = {
     "sales": ("sales", "revenue", "best selling", "top selling"),
     "forecast": ("forecast", "demand", "next month", "next 30 days"),
     "stockout": ("stockout", "run out", "running out", "stock-out"),
-    "seasonal": ("seasonal", "seasonality", "seasonal demand", "monthly demand pattern"),
+    "seasonal": ("seasonal", "seasonality", "seasonal demand", "monthly demand pattern", "festival", "festive"),
     "reorder": ("reorder", "restock", "what should i buy", "purchase recommendation"),
     "supplier": ("supplier", "distributor"),
     "budget": ("budget", "cash available", "purchase budget"),
