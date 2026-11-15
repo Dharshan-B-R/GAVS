@@ -1,4 +1,5 @@
 """Shop-staff read-only endpoints for KiranaAI planning agents."""
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -11,6 +12,9 @@ from app.agents.orchestrator import route_question
 from app.services.inventory_intelligence_service import analyze_inventory
 from app.services.expiry_intelligence_service import analyze_expiry_risk
 from app.services.stockout_prediction_service import predict_stockout_risk
+from app.services.event_demand_service import analyze_event_demand
+from app.services.supplier_price_intelligence_service import compare_supplier_prices
+from app.services.seasonal_demand_service import analyze_seasonal_demand
 
 router = APIRouter(tags=["KiranaAI Agents"])
 
@@ -24,6 +28,33 @@ def demand_forecast(
     db: Session = Depends(get_db),
 ):
     return forecast_demand(db, days, limit, shop_id=shop_id)
+
+
+@router.get("/shops/{shop_id}/agents/seasonal-demand")
+def seasonal_demand(
+    shop_id: int,
+    history_days: int = Query(365, ge=300, le=730),
+    limit: int = Query(50, ge=1, le=100),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    return analyze_seasonal_demand(db, shop_id, history_days, limit)
+
+
+@router.get("/shops/{shop_id}/agents/event-demand")
+def event_demand(
+    shop_id: int,
+    event_name: str = Query(..., min_length=1, max_length=100),
+    event_start: date = Query(...),
+    window_days: int = Query(7, ge=1, le=30),
+    baseline_days: int = Query(56, ge=28, le=180),
+    limit: int = Query(50, ge=1, le=100),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    return analyze_event_demand(
+        db, shop_id, event_name, event_start, window_days, baseline_days, limit
+    )
 
 
 @router.get("/shops/{shop_id}/agents/stockout-risk")
