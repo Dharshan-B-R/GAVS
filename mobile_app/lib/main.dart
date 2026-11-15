@@ -2270,7 +2270,7 @@ if (showMessage) {
     try {
       final response = await ApiService.getRestockRecommendations(
         days: 30,
-        warningDays: 7,
+        leadTimeDays: 7,
       );
       final rawItems = response['recommendations'] as List<dynamic>? ?? [];
       final loadedItems = rawItems
