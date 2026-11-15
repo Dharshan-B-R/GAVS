@@ -6,7 +6,7 @@ from app.models.product import Product
 from app.models.stock_movement import StockMovement
 
 
-def forecast_demand(db: Session, days: int = 30, limit: int = 50) -> dict:
+def forecast_demand(db: Session, days: int = 30, limit: int = 50, shop_id: int | None = None) -> dict:
     if not 7 <= days <= 365:
         raise ValueError("Forecast history window must be between 7 and 365 days")
     if not 1 <= limit <= 100:
@@ -23,7 +23,7 @@ def forecast_demand(db: Session, days: int = 30, limit: int = 50) -> dict:
         & (StockMovement.quantity_change < 0)
         & (StockMovement.created_at >= start)
         & (StockMovement.created_at <= end),
-    ).filter(Product.is_active.is_(True)).group_by(Product.id).order_by(Product.name).limit(limit).all()
+    ).filter(Product.is_active.is_(True), *([Product.shop_id == shop_id] if shop_id is not None else [])).group_by(Product.id).order_by(Product.name).limit(limit).all()
     forecasts = []
     for product, sold in rows:
         units = float(sold or 0)
