@@ -2,7 +2,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.auth.routes import require_shop_staff
+from app.auth.routes import require_shop_staff, get_current_user
+from app.models.user import User
 from app.services.demand_forecast_service import forecast_demand
 from app.services.reorder_service import build_reorder_recommendations
 from app.agents.supplier_agent import compare_suppliers
@@ -50,6 +51,7 @@ def orchestrate_question(
     shop_id: int,
     payload: dict,
     membership=Depends(require_shop_staff),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     question = payload.get("question")
@@ -57,6 +59,11 @@ def orchestrate_question(
         plan = route_question(question)
     except ValueError as error:
         raise HTTPException(400, str(error))
+    restricted_agents = []
+    if current_user.role != "Owner":
+        restricted_agents = [agent for agent in plan["agents"] if agent in {"budget", "approval"}]
+        plan["agents"] = [agent for agent in plan["agents"] if agent not in {"budget", "approval"}]
+
     results = {}
     for agent in plan["agents"]:
         if agent == "inventory":
@@ -114,5 +121,6 @@ def orchestrate_question(
                 ],
             }
     return {"plan": plan, "results": results,
+            "restricted_agents": restricted_agents,
             "safety": {"read_only": True, "purchase_orders_created": False,
                        "owner_approval_required": True}}
