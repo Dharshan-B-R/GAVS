@@ -9,6 +9,7 @@ from app.services.reorder_service import build_reorder_recommendations
 from app.agents.supplier_agent import compare_suppliers
 from app.agents.orchestrator import route_question
 from app.services.inventory_intelligence_service import analyze_inventory
+from app.services.expiry_intelligence_service import analyze_expiry_risk
 
 router = APIRouter(tags=["KiranaAI Agents"])
 
@@ -22,6 +23,18 @@ def demand_forecast(
     db: Session = Depends(get_db),
 ):
     return forecast_demand(db, days, limit, shop_id=shop_id)
+
+
+@router.get("/shops/{shop_id}/agents/expiry-risk")
+def expiry_risk(
+    shop_id: int,
+    horizon_days: int = Query(30, ge=1, le=365),
+    limit: int = Query(100, ge=1, le=500),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    """Read-only, shop-scoped expiry exposure and recorded loss analysis."""
+    return analyze_expiry_risk(db, shop_id, horizon_days=horizon_days, limit=limit)
 
 
 @router.get("/shops/{shop_id}/agents/reorder-recommendations")
