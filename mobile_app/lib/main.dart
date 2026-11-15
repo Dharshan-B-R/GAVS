@@ -2114,8 +2114,16 @@ if (showMessage) {
         _supplierDirectory = results[4] as List<dynamic>;
         _supplierDirectorySelection ??= _supplierDirectory.isNotEmpty
             ? (_supplierDirectory.first['supplier_id'] as num).toInt() : null;
-        _selectedSupplierId ??= suppliers.isNotEmpty
-            ? (suppliers.first['supplier_id'] as num).toInt() : null;
+        if (_selectedSupplierId == null ||
+            !suppliers.any((raw) => (raw['supplier_id'] as num).toInt() == _selectedSupplierId)) {
+          _selectedSupplierId = suppliers.isNotEmpty
+              ? (suppliers.first['supplier_id'] as num).toInt() : null;
+        }
+        if (_supplierDirectorySelection == null ||
+            !_supplierDirectory.any((raw) => (raw['supplier_id'] as num).toInt() == _supplierDirectorySelection)) {
+          _supplierDirectorySelection = _supplierDirectory.isNotEmpty
+              ? (_supplierDirectory.first['supplier_id'] as num).toInt() : null;
+        }
         _budgetController.text = budget['available_amount']?.toString() ?? '0.00';
         _purchasePlanningLoading = false;
       });
