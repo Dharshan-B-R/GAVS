@@ -38,6 +38,7 @@ from app.models.supplier import Supplier
 from app.models.user import User
 from app.models.shop_purchase_budget import ShopPurchaseBudget
 from app.models.purchase_proposal import PurchaseProposal
+from app.models.product_alias import ProductAlias
 
 
 # Alembic configuration object.
