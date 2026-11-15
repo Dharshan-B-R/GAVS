@@ -59,11 +59,21 @@ def test_expiry_loss_deducts_recorded_supplier_credit(db_session):
     )
     db_session.add(batch)
     db_session.flush()
-    db_session.add(ExpiryRecord(
-        batch_id=batch.id, quantity=4, action="disposed",
-        credit_amount=15, approval_status="approved",
-        action_status="completed",
-    ))
+    db_session.add_all([
+        ExpiryRecord(
+            batch_id=batch.id, quantity=4, action="disposal",
+            approval_status="approved", action_status="completed",
+        ),
+        ExpiryRecord(
+            batch_id=batch.id, quantity=2, action="supplier_return",
+            credit_amount=15, approval_status="approved",
+            action_status="completed", return_status="credited",
+        ),
+        ExpiryRecord(
+            batch_id=batch.id, quantity=3, action="disposal",
+            approval_status="pending", action_status="requested",
+        ),
+    ])
     db_session.flush()
 
     result = analyze_expiry_risk(
