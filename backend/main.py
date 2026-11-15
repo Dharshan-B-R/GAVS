@@ -306,10 +306,14 @@ def get_product(
 
 # GET: Inventory Summary Dashboard
 @app.get("/inventory/summary")
-def get_inventory_summary(db: Session = Depends(get_db)):
-
+def get_inventory_summary(
+    shop_id: int = Query(..., gt=0),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
     products = db.query(Product).filter(
-        Product.is_active == True
+        Product.shop_id == shop_id,
+        Product.is_active.is_(True),
     ).all()
 
     total_products = len(products)
@@ -4586,7 +4590,9 @@ def get_fast_moving_products(
                 StockMovement,
                 StockMovement.product_id == Product.id
             )
+            .join(Product, Product.id == StockMovement.product_id)
             .filter(
+                Product.shop_id == shop_id,
                 StockMovement.movement_type == "sale",
                 StockMovement.created_at >= start_date,
                 StockMovement.created_at <= end_date
@@ -4870,9 +4876,11 @@ def get_dead_stock(
 
 @app.get("/inventory/restock-recommendations")
 def get_restock_recommendations(
+    shop_id: int = Query(..., gt=0),
     days: int = 30,
     warning_days: int = 7,
-    db: Session = Depends(get_db)
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
 ):
     try:
         # Validate parameters
@@ -4925,7 +4933,10 @@ def get_restock_recommendations(
                 sales_subquery,
                 Product.id == sales_subquery.c.product_id
             )
-            .filter(Product.is_active == True)
+            .filter(
+                Product.shop_id == shop_id,
+                Product.is_active.is_(True),
+            )
             .all()
         )
 
