@@ -3789,7 +3789,7 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
                 Text('Amount: ₹${order['total_amount']}'),
                 Text('Status: ${order['status']}'),
                 const Divider(),
-                ...items.map((item) => Text('Product #${item['product_id']} · Qty ${item['quantity']}')),
+                ...items.map((item) => Text('${item['product_name'] ?? 'Product #${item['product_id']}'} · Qty ${item['quantity']} ${item['unit'] ?? ''}')),
                 if (order['status'] == 'ordered')
                   Align(alignment: Alignment.centerRight, child: FilledButton(
                     onPressed: _confirming.contains(id) ? null : () => _confirm(id),
