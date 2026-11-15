@@ -94,6 +94,11 @@ from app.auth.routes import router as auth_router
 
 app.include_router(auth_router)
 
+# Owner-controlled cash budgets and purchase proposal approval.
+# This router records approval only; it never places supplier orders.
+from app.routers.purchase_planning import router as purchase_planning_router
+app.include_router(purchase_planning_router)
+
 
 
 
