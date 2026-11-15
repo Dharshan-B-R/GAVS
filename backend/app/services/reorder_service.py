@@ -6,14 +6,14 @@ from app.models.product import Product
 
 
 def build_reorder_recommendations(db: Session, days: int = 30, lead_time_days: int = 7,
-                                  safety_days: int = 3, limit: int = 50) -> dict:
+                                  safety_days: int = 3, limit: int = 50, shop_id: int | None = None) -> dict:
     if not 1 <= lead_time_days <= 90 or not 0 <= safety_days <= 60:
         raise ValueError("Lead time must be 1-90 days and safety days 0-60")
-    forecast = forecast_demand(db, days=days, limit=limit)
-    saleable = _saleable_subquery(db)
+    forecast = forecast_demand(db, days=days, limit=limit, shop_id=shop_id)
+    saleable = _saleable_subquery(db, shop_id)
     result = []
     for item in forecast["products"]:
-        product = db.query(Product).filter(Product.id == item["product_id"]).first()
+        product = db.query(Product).filter(Product.id == item["product_id"], *([Product.shop_id == shop_id] if shop_id is not None else [])).first()
         if product is None:
             continue
         saleable_qty = db.query(saleable.c.saleable_stock).filter(
