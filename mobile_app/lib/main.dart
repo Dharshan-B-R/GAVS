@@ -1568,6 +1568,12 @@ if (showMessage) {
 
               ),
 
+              IconButton(
+                tooltip: 'Verify received batches',
+                onPressed: showBatchVerificationDialog,
+                icon: const Icon(Icons.fact_check_outlined),
+              ),
+
               IconButton.filled(
 
                 tooltip: 'Add product',
@@ -1995,6 +2001,26 @@ if (showMessage) {
   }
 
 
+
+  Future<void> showBatchVerificationDialog() async {
+    try {
+      final batches = await ApiService.getInventoryBatches();
+      if (!mounted) return;
+      if (batches.isEmpty) {
+        showSnackBar('There are no remaining batches to verify.');
+        return;
+      }
+      final changed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => BatchVerificationDialog(
+          batches: batches.cast<Map<String, dynamic>>(),
+        ),
+      );
+      if (changed == true) await loadBackendData();
+    } catch (error) {
+      if (mounted) showSnackBar('Could not load inventory batches: $error', isError: true);
+    }
+  }
 
   /// Opens the independent Add Product dialog and submits its validated data.
   /// Method: GET dialog result, then POST /products through createProduct().
@@ -3922,5 +3948,103 @@ class _EmployeeInvitationScreenState extends State<EmployeeInvitationScreen> {
         )),
       ),
     )),
+  );
+}
+
+
+class BatchVerificationDialog extends StatefulWidget {
+  const BatchVerificationDialog({super.key, required this.batches});
+  final List<Map<String, dynamic>> batches;
+
+  @override
+  State<BatchVerificationDialog> createState() => _BatchVerificationDialogState();
+}
+
+class _BatchVerificationDialogState extends State<BatchVerificationDialog> {
+  late final List<Map<String, dynamic>> _batches;
+  final Map<int, TextEditingController> _quantities = {};
+  final Set<int> _saving = {};
+  bool _changed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _batches = widget.batches.map((item) => Map<String, dynamic>.from(item)).toList();
+    for (final batch in _batches) {
+      final id = (batch['batch_id'] as num).toInt();
+      _quantities[id] = TextEditingController(text: batch['quantity'].toString());
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _quantities.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _verify(Map<String, dynamic> batch) async {
+    final id = (batch['batch_id'] as num).toInt();
+    final quantity = double.tryParse(_quantities[id]!.text.trim());
+    if (quantity == null || quantity < 0 || !quantity.isFinite) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid physical count.')));
+      return;
+    }
+    setState(() => _saving.add(id));
+    try {
+      await ApiService.verifyInventoryBatch(id, quantity);
+      if (mounted) setState(() {
+        batch['is_verified'] = true;
+        batch['quantity'] = quantity;
+        _changed = true;
+        _saving.remove(id);
+      });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Batch ${batch['batch_number']} verified.')));
+    } catch (error) {
+      if (mounted) {
+        setState(() => _saving.remove(id));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Verification failed: $error')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Verify inventory batches'),
+    content: SizedBox(
+      width: 560,
+      child: ListView(
+        shrinkWrap: true,
+        children: _batches.map((batch) {
+          final id = (batch['batch_id'] as num).toInt();
+          final verified = batch['is_verified'] == true;
+          return Card(child: Padding(padding: const EdgeInsets.all(12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(batch['product_name'].toString(),
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('Batch: ${batch['batch_number']} · Expiry: ${batch['expiry_date']}'),
+              Text('Recorded quantity: ${batch['quantity']} ${batch['unit']}'),
+              if (verified)
+                const Text('Verified', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold))
+              else ...[
+                TextField(controller: _quantities[id],
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(labelText: 'Physical verified quantity')),
+                Align(alignment: Alignment.centerRight, child: FilledButton.tonal(
+                  onPressed: _saving.contains(id) ? null : () => _verify(batch),
+                  child: Text(_saving.contains(id) ? 'Saving...' : 'Verify batch'))),
+              ],
+            ]),
+          ));
+        }).toList(),
+      ),
+    ),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context, _changed), child: const Text('Done')),
+    ],
   );
 }
