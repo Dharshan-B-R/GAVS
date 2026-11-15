@@ -575,6 +575,30 @@ def require_own_distributor(
 # Return details of the authenticated user.
 # ==========================================
 
+@router.get("/shops")
+def get_my_shops(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return only active shops the authenticated user actively belongs to."""
+    memberships = db.query(ShopMembership, Shop).join(
+        Shop, Shop.id == ShopMembership.shop_id
+    ).filter(
+        ShopMembership.user_id == current_user.id,
+        ShopMembership.is_active.is_(True),
+        Shop.is_active.is_(True),
+    ).order_by(Shop.name.asc()).all()
+
+    return [
+        {
+            "shop_id": shop.id,
+            "name": shop.name,
+            "address": shop.address,
+            "role": membership.role,
+        }
+        for membership, shop in memberships
+    ]
+
 @router.get("/me", response_model=UserResponse)
 def get_my_account(
     current_user: User = Depends(get_current_user),
