@@ -528,9 +528,13 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
         inventorySummary = {};
         restockRecommendations.clear();
         selectedRestockProducts.clear();
+        _salesHistory.clear();
+        _purchaseProposals.clear();
+        _purchaseOrders.clear();
       });
       await loadBackendData();
       await loadRestockRecommendations();
+      await _loadSalesHistory();
       if (mounted) showSnackBar('Switched to ${active?['name'] ?? 'selected shop'}.');
     } catch (error) {
       if (mounted) showSnackBar('Could not switch shop: $error', isError: true);
