@@ -19,6 +19,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.product import Product
 from app.models.product_batch import ProductBatch
 from app.models.stock_movement import StockMovement
+from app.models.batch_verification import BatchVerification
 
 
 router = APIRouter(tags=["Shop Operations and Supplier Workspace"])
@@ -232,6 +233,17 @@ def confirm_supplier_order(
 
 
 
+class ReconcileBatchQuantity(BaseModel):
+    batch_id: int = Field(gt=0)
+    quantity: float = Field(ge=0)
+
+
+class ReconcileBatchesInput(BaseModel):
+    product_id: int = Field(gt=0)
+    batches: list[ReconcileBatchQuantity] = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=3, max_length=255)
+
+
 class StockAdjustmentInput(BaseModel):
     product_id: int = Field(gt=0)
     quantity_change: float
@@ -394,3 +406,72 @@ def list_shop_inventory_batches(
         "expiry_date": batch.expiry_date,
         "is_verified": batch.is_verified,
     } for batch, product in rows]
+
+
+
+@router.post("/shops/{shop_id}/inventory/reconcile-batches")
+def reconcile_shop_batches(
+    shop_id: int,
+    payload: ReconcileBatchesInput,
+    current_user: User = Depends(get_current_user),
+    membership=Depends(require_shop_staff),
+    db: Session = Depends(get_db),
+):
+    """Physically reconcile every batch for one shop product and record verification history."""
+    product = db.query(Product).filter(
+        Product.id == payload.product_id,
+        Product.shop_id == shop_id,
+        Product.is_active.is_(True),
+    ).with_for_update().first()
+    if product is None:
+        raise HTTPException(404, "Active product not found in this shop")
+
+    existing = db.query(ProductBatch).filter(
+        ProductBatch.product_id == product.id,
+    ).order_by(ProductBatch.id.asc()).with_for_update().all()
+    submitted = {item.batch_id: item for item in payload.batches}
+    expected_ids = {batch.id for batch in existing}
+    if len(submitted) != len(payload.batches) or set(submitted) != expected_ids:
+        raise HTTPException(400, "Reconciliation must include every existing batch exactly once")
+    before = float(product.quantity or 0)
+    total = 0.0
+    for batch in existing:
+        previous = float(batch.quantity or 0)
+        verified = float(submitted[batch.id].quantity)
+        if not math.isfinite(verified):
+            raise HTTPException(422, "Batch quantities must be finite numbers")
+        batch.quantity = verified
+        batch.is_verified = True
+        batch.verified_at = datetime.now(timezone.utc)
+        total += verified
+        db.add(BatchVerification(
+            batch_id=batch.id,
+            previous_quantity=previous,
+            verified_quantity=verified,
+            performed_by=current_user.id,
+            reference_type="reconciliation",
+            reason=payload.reason.strip(),
+            allow_reverification=1,
+        ))
+    product.quantity = total
+    difference = total - before
+    if abs(difference) > 0.000001:
+        db.add(StockMovement(
+            product_id=product.id,
+            movement_type="adjustment",
+            quantity_change=difference,
+            quantity_before=before,
+            quantity_after=total,
+            reason=payload.reason.strip(),
+            performed_by=current_user.id,
+            reference_type="batch_reconciliation",
+        ))
+    db.commit()
+    return {
+        "product_id": product.id,
+        "quantity_before": before,
+        "quantity_after": total,
+        "quantity_change": difference,
+        "batches_reconciled": len(existing),
+        "message": "Batch quantities reconciled and physically verified.",
+    }
