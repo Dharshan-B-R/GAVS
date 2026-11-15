@@ -1980,9 +1980,10 @@ if (showMessage) {
                   deleteProduct(product);
                 }
               },
-              itemBuilder: (context) => const [
-                PopupMenuItem(value: 'edit', child: Text('Edit product details')),
-                PopupMenuItem(value: 'delete', child: Text('Archive product')),
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'edit', child: Text('Edit product details')),
+                if (widget.userRole == 'owner')
+                  const PopupMenuItem(value: 'delete', child: Text('Archive product')),
               ],
 
             ),
