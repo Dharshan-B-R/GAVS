@@ -460,3 +460,32 @@ def test_employee_can_read_inventory_but_cannot_access_owner_budget(client):
         headers=auth(employee_token),
     )
     assert budget.status_code == 403
+
+
+
+def test_employee_ai_cannot_read_owner_budget_or_pending_approvals(client):
+    owner = register_owner(client, "employee-ai-owner@example.com")
+    shop_id = owner["shop"]["id"]
+    invite = client.post(
+        f"/auth/shops/{shop_id}/employees/invitations",
+        headers=auth(owner["access_token"]),
+        json={"email": "employee-ai@example.com"},
+    )
+    accepted = client.post(
+        "/auth/employees/accept-invitation",
+        json={
+            "invitation_token": invite.json()["invitation_token"],
+            "full_name": "AI Employee",
+            "password": "EmployeePass@123",
+        },
+    )
+    response = client.post(
+        f"/shops/{shop_id}/agents/orchestrate",
+        headers=auth(accepted.json()["access_token"]),
+        json={"question": "What is my cash budget and pending purchase approvals?"},
+    )
+    assert response.status_code == 200, response.text
+    assert "budget" in response.json()["restricted_agents"]
+    assert "approval" in response.json()["restricted_agents"]
+    assert "budget" not in response.json()["results"]
+    assert "approval" not in response.json()["results"]
