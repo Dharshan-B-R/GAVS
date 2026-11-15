@@ -258,17 +258,18 @@ def adjust_inventory_stock(
         raise HTTPException(404, "Active product not found in this shop")
 
     before = float(product.quantity or 0)
+    batches = db.query(ProductBatch).filter(
+        ProductBatch.product_id == product.id,
+        ProductBatch.quantity > 0,
+    ).order_by(ProductBatch.expiry_date.asc(), ProductBatch.id.asc()).with_for_update().all()
+    batch_total = sum(float(batch.quantity or 0) for batch in batches)
+    if abs(batch_total - before) > 0.000001:
+        raise HTTPException(409, "Batch quantities do not match product stock. Reconcile batches before adjusting.")
+
     if change < 0:
         reduction = abs(change)
         if reduction > before + 0.000001:
             raise HTTPException(409, "Stock reduction exceeds recorded stock")
-        batches = db.query(ProductBatch).filter(
-            ProductBatch.product_id == product.id,
-            ProductBatch.quantity > 0,
-        ).order_by(ProductBatch.expiry_date.asc(), ProductBatch.id.asc()).with_for_update().all()
-        batch_total = sum(float(batch.quantity or 0) for batch in batches)
-        if abs(batch_total - before) > 0.000001:
-            raise HTTPException(409, "Batch quantities do not match product stock. Reconcile batches before adjusting.")
         remaining = reduction
         for batch in batches:
             take = min(float(batch.quantity), remaining)
