@@ -22,6 +22,10 @@ from app.models.product_batch import ProductBatch
 from app.models.expiry_record import ExpiryRecord
 from app.models.shop_purchase_budget import ShopPurchaseBudget
 from app.models.purchase_proposal import PurchaseProposal
+from app.models.user import User
+from app.models.shop import Shop
+from app.models.shop_membership import ShopMembership
+from app.models.shop_invitation import ShopInvitation
 from datetime import date, timedelta, datetime, timezone
 import math
 import traceback
