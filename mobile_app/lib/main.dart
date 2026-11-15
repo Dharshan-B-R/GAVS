@@ -3352,3 +3352,118 @@ class _AddProductDialogState extends State<AddProductDialog> {
   }
 }
 
+
+
+class ReceivePurchaseDialog extends StatefulWidget {
+  const ReceivePurchaseDialog({super.key, required this.items, required this.products});
+  final List<Map<String, dynamic>> items;
+  final List<Product> products;
+
+  @override
+  State<ReceivePurchaseDialog> createState() => _ReceivePurchaseDialogState();
+}
+
+class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
+  final Map<int, TextEditingController> _batchControllers = {};
+  final Map<int, DateTime> _expiryDates = {};
+
+  @override
+  void initState() {
+    super.initState();
+    for (final item in widget.items) {
+      final id = (item['purchase_item_id'] as num).toInt();
+      _batchControllers[id] = TextEditingController();
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _batchControllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  String _productName(int productId) {
+    for (final product in widget.products) {
+      if (product.id == productId) return product.name;
+    }
+    return 'Product #$productId';
+  }
+
+  void _submit() {
+    final result = <Map<String, dynamic>>[];
+    for (final item in widget.items) {
+      final id = (item['purchase_item_id'] as num).toInt();
+      final batch = _batchControllers[id]!.text.trim();
+      final expiry = _expiryDates[id];
+      if (batch.isEmpty || expiry == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Enter a batch number and expiry date for every line.')),
+        );
+        return;
+      }
+      result.add({
+        'purchase_item_id': id,
+        'batch_number': batch,
+        'expiry_date': expiry.toIso8601String().substring(0, 10),
+      });
+    }
+    Navigator.of(context).pop(result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Receive goods'),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: widget.items.map((item) {
+              final itemId = (item['purchase_item_id'] as num).toInt();
+              final productId = (item['product_id'] as num).toInt();
+              final expiry = _expiryDates[itemId];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_productName(productId),
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                    Text('Ordered quantity: ${item['quantity']}'),
+                    TextField(
+                      controller: _batchControllers[itemId],
+                      decoration: const InputDecoration(labelText: 'Batch number'),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final selected = await showDatePicker(
+                          context: context,
+                          firstDate: DateTime.now(),
+                          lastDate: DateTime(2100),
+                          initialDate: DateTime.now().add(const Duration(days: 180)),
+                        );
+                        if (selected != null) setState(() => _expiryDates[itemId] = selected);
+                      },
+                      icon: const Icon(Icons.calendar_today),
+                      label: Text(expiry == null ? 'Select expiry date' :
+                        'Expiry: ${expiry.toIso8601String().substring(0, 10)}'),
+                    ),
+                    const Divider(),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: _submit, child: const Text('Confirm receipt')),
+      ],
+    );
+  }
+}
