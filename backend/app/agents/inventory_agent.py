@@ -198,6 +198,7 @@ def detect_fast_inventory_intent(
             r"\bunsold\s+(?:stock|products?|items?)\b",
             r"\bproducts?\s+with\s+no\s+sales\b",
             r"\bproducts?\s+(?:have|has)\s+no\s+sales\b",
+            r"\b(?:products?|items?|stock)\s+(?:that\s+)?(?:have\s+)?not\s+sold\b",
             r"\bno\s+sales\s+for\s+(?:these\s+)?products?\b",
             r"\b(?:stock|products?)\s+not\s+selling\b",
         ],
