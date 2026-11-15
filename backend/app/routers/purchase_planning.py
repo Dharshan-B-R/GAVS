@@ -3,7 +3,7 @@
 Approval records intent only. It deliberately does not create a Purchase,
 PurchaseItem, ProductBatch, payment, or stock movement.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional
 
@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.auth.routes import get_current_user, require_shop_owner
+from app.auth.routes import get_current_user, require_shop_owner, require_shop_staff
 from app.models.user import User
 from app.models.shop_purchase_budget import ShopPurchaseBudget
 from app.models.purchase_proposal import PurchaseProposal
@@ -21,6 +21,8 @@ from app.models.supplier import Supplier
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.shop_distributor_connection import ShopDistributorConnection
+from app.models.product_batch import ProductBatch
+from app.models.stock_movement import StockMovement
 
 
 router = APIRouter(tags=["Purchase Planning and Approval"])
@@ -47,6 +49,16 @@ class ProposalCreate(BaseModel):
 class ProposalDecision(BaseModel):
     approve: bool
     note: Optional[str] = Field(default=None, max_length=500)
+
+
+class PurchaseReceiptItem(BaseModel):
+    purchase_item_id: int = Field(gt=0)
+    batch_number: str = Field(min_length=1, max_length=100)
+    expiry_date: date
+
+
+class PurchaseReceiptCreate(BaseModel):
+    items: list[PurchaseReceiptItem] = Field(min_length=1, max_length=100)
 
 
 def _money(value: Decimal) -> Decimal:
@@ -375,4 +387,86 @@ def execute_approved_purchase_order(
         "purchase_status": purchase.status,
         "total_amount": str(proposal.total_amount),
         "message": "Internal purchase order created. Stock was not increased; record goods receipt separately when delivered.",
+    }
+
+
+
+@router.post("/shops/{shop_id}/purchases/{purchase_id}/receive")
+def receive_approved_purchase_order(
+    shop_id: int,
+    purchase_id: int,
+    payload: PurchaseReceiptCreate,
+    membership=Depends(require_shop_staff),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Receive every line of an internal PO once, creating dated batches and stock movements."""
+    purchase = db.query(Purchase).filter(
+        Purchase.id == purchase_id,
+        Purchase.shop_id == shop_id,
+    ).with_for_update().first()
+    if purchase is None:
+        raise HTTPException(404, "Purchase order not found")
+    if purchase.status == "received":
+        return {"purchase_id": purchase.id, "status": "received", "message": "Goods for this purchase order were already received"}
+    if purchase.status not in {"ordered", "confirmed"}:
+        raise HTTPException(409, "Only ordered or supplier-confirmed purchase orders can be received")
+
+    order_items = db.query(PurchaseItem).filter(
+        PurchaseItem.purchase_id == purchase.id
+    ).order_by(PurchaseItem.id.asc()).with_for_update().all()
+    submitted = {item.purchase_item_id: item for item in payload.items}
+    expected_ids = {item.id for item in order_items}
+    if len(submitted) != len(payload.items) or set(submitted) != expected_ids:
+        raise HTTPException(400, "Provide exactly one batch number and expiry date for every purchase-order line")
+    today = date.today()
+    for order_item in order_items:
+        receipt = submitted[order_item.id]
+        if receipt.expiry_date < today:
+            raise HTTPException(400, f"Batch for purchase item {order_item.id} is already expired")
+        if order_item.batch_id is not None:
+            raise HTTPException(409, f"Purchase item {order_item.id} already has a received batch")
+        product = db.query(Product).filter(
+            Product.id == order_item.product_id,
+            Product.shop_id == shop_id,
+            Product.is_active.is_(True),
+        ).with_for_update().first()
+        if product is None:
+            raise HTTPException(409, "A purchase-order product is no longer active in this shop")
+        before = float(product.quantity or 0)
+        received_quantity = float(order_item.quantity)
+        batch = ProductBatch(
+            product_id=product.id,
+            batch_number=receipt.batch_number.strip(),
+            manufacturing_date=None,
+            expiry_date=receipt.expiry_date,
+            quantity=received_quantity,
+            purchase_price=float(order_item.unit_price),
+            is_verified=False,
+        )
+        db.add(batch)
+        db.flush()
+        product.quantity = before + received_quantity
+        movement = StockMovement(
+            product_id=product.id,
+            movement_type="purchase",
+            quantity_change=received_quantity,
+            quantity_before=before,
+            quantity_after=product.quantity,
+            reason=f"Goods received against PO {purchase.invoice_number}",
+            performed_by=current_user.id,
+            reference_type="purchase",
+            reference_id=purchase.id,
+        )
+        db.add(movement)
+        order_item.batch_id = batch.id
+
+    purchase.status = "received"
+    purchase.purchase_date = datetime.now(timezone.utc)
+    db.commit()
+    return {
+        "purchase_id": purchase.id,
+        "status": purchase.status,
+        "received_lines": len(order_items),
+        "message": "Goods receipt recorded. New batches remain unverified until the shop's batch-verification workflow approves them.",
     }
