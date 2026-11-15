@@ -166,6 +166,11 @@ def create_product(
     membership=Depends(require_shop_staff),
     db: Session = Depends(get_db)
 ):
+    if float(product_data.quantity or 0) != 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Create the product with zero stock, then record opening stock with a batch and expiry date.",
+        )
     product = Product(**product_data.model_dump(), shop_id=shop_id)
 
     try:
@@ -199,6 +204,11 @@ def update_product(
         raise HTTPException(status_code=404, detail="Product not found")
 
     update_data = product_data.model_dump(exclude_unset=True)
+    if "quantity" in update_data:
+        raise HTTPException(
+            status_code=400,
+            detail="Use the audited inventory adjustment endpoint to change stock quantities.",
+        )
 
     for field, value in update_data.items():
         setattr(product, field, value)
