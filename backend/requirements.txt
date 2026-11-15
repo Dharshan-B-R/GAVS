@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+SQLAlchemy
+psycopg2-binary
+alembic
+pydantic[email]
+python-dotenv
+google-genai
+PyJWT
+pwdlib[argon2]
+python-multipart
+pytest
+httpx
