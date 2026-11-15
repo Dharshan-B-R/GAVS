@@ -1576,6 +1576,11 @@ if (showMessage) {
               ),
 
               IconButton(
+                tooltip: 'Set up opening batch for legacy stock',
+                onPressed: showOpeningBatchDialog,
+                icon: const Icon(Icons.playlist_add_outlined),
+              ),
+              IconButton(
                 tooltip: 'Verify received batches',
                 onPressed: showBatchVerificationDialog,
                 icon: const Icon(Icons.fact_check_outlined),
@@ -1999,6 +2004,30 @@ if (showMessage) {
   }
 
 
+
+  Future<void> showOpeningBatchDialog() async {
+    final stocked = products.where((product) => product.quantity > 0).toList();
+    if (stocked.isEmpty) {
+      showSnackBar('No positive legacy stock needs an opening batch.');
+      return;
+    }
+    final details = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => OpeningBatchDialog(products: stocked),
+    );
+    if (details == null) return;
+    try {
+      await ApiService.createOpeningBatch(
+        productId: details['product_id'] as int,
+        batchNumber: details['batch_number'] as String,
+        expiryDate: details['expiry_date'] as String,
+      );
+      await loadBackendData();
+      await showBatchVerificationDialog();
+    } catch (error) {
+      if (mounted) showSnackBar('Opening batch setup failed: $error', isError: true);
+    }
+  }
 
   Future<void> showBatchVerificationDialog() async {
     try {
@@ -4191,6 +4220,83 @@ class _EditProductDialogState extends State<EditProductDialog> {
     actions: [
       TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
       FilledButton(onPressed: _save, child: const Text('Save changes')),
+    ],
+  );
+}
+
+
+class OpeningBatchDialog extends StatefulWidget {
+  const OpeningBatchDialog({super.key, required this.products});
+  final List<Product> products;
+
+  @override
+  State<OpeningBatchDialog> createState() => _OpeningBatchDialogState();
+}
+
+class _OpeningBatchDialogState extends State<OpeningBatchDialog> {
+  final _batch = TextEditingController();
+  int? _productId;
+  DateTime? _expiry;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.products.isNotEmpty) _productId = widget.products.first.id;
+  }
+
+  @override
+  void dispose() {
+    _batch.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Set up opening stock batch'),
+    content: SizedBox(width: 420, child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text('For stock recorded before batch tracking. The existing product quantity will not be increased.'),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<int>(
+          value: _productId,
+          decoration: const InputDecoration(labelText: 'Product'),
+          items: widget.products.map((product) => DropdownMenuItem(
+            value: product.id,
+            child: Text('${product.name} · ${product.quantity} ${product.unit}'),
+          )).toList(),
+          onChanged: (value) => setState(() => _productId = value),
+        ),
+        TextField(controller: _batch, decoration: const InputDecoration(labelText: 'Batch number')),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: () async {
+            final selected = await showDatePicker(
+              context: context,
+              firstDate: DateTime.now(),
+              lastDate: DateTime(2100),
+              initialDate: DateTime.now().add(const Duration(days: 180)),
+            );
+            if (selected != null) setState(() => _expiry = selected);
+          },
+          icon: const Icon(Icons.calendar_today),
+          label: Text(_expiry == null ? 'Select expiry date' :
+            'Expiry: ${_expiry!.toIso8601String().substring(0, 10)}'),
+        ),
+      ],
+    )),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+      FilledButton(
+        onPressed: _productId == null || _batch.text.trim().isEmpty || _expiry == null
+            ? null
+            : () => Navigator.pop(context, {
+                'product_id': _productId,
+                'batch_number': _batch.text.trim(),
+                'expiry_date': _expiry!.toIso8601String().substring(0, 10),
+              }),
+        child: const Text('Create batch'),
+      ),
     ],
   );
 }
