@@ -27,15 +27,16 @@ def _validate(days: int, limit: int = 10) -> None:
         raise ValueError(f"limit must be between 1 and {MAX_LIMIT}")
 
 
-def _sales_subquery(db: Session, days: int):
+def _sales_subquery(db: Session, days: int, shop_id: int | None = None):
     """Aggregate negative sale movements into positive units sold per product."""
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
-    return (
+    query = (
         db.query(
             StockMovement.product_id.label("product_id"),
             func.sum(-StockMovement.quantity_change).label("units_sold"),
         )
+        .join(Product, Product.id == StockMovement.product_id)
         .filter(
             StockMovement.movement_type == "sale",
             StockMovement.quantity_change < 0,
@@ -43,34 +44,40 @@ def _sales_subquery(db: Session, days: int):
             StockMovement.created_at <= end,
         )
         .group_by(StockMovement.product_id)
-        .subquery()
     )
+    if shop_id is not None:
+        query = query.filter(Product.shop_id == shop_id)
+    return query.subquery()
 
 
-def _saleable_subquery(db: Session):
+def _saleable_subquery(db: Session, shop_id: int | None = None):
     """Only verified, unexpired positive batch stock is considered saleable."""
-    return (
+    query = (
         db.query(
             ProductBatch.product_id.label("product_id"),
             func.sum(ProductBatch.quantity).label("saleable_stock"),
         )
+        .join(Product, Product.id == ProductBatch.product_id)
         .filter(
             ProductBatch.is_verified.is_(True),
             ProductBatch.expiry_date >= date.today(),
             ProductBatch.quantity > 0,
         )
         .group_by(ProductBatch.product_id)
-        .subquery()
     )
+    if shop_id is not None:
+        query = query.filter(Product.shop_id == shop_id)
+    return query.subquery()
 
 
-def get_low_stock(db: Session, limit: int = 10) -> dict[str, Any]:
+def get_low_stock(db: Session, limit: int = 10, shop_id: int | None = None) -> dict[str, Any]:
     """Find active products whose recorded quantity is at/below minimum stock."""
     _validate(DEFAULT_DAYS, limit)
+    query = db.query(Product).filter(Product.is_active.is_(True))
+    if shop_id is not None:
+        query = query.filter(Product.shop_id == shop_id)
     rows = (
-        db.query(Product)
-        .filter(
-            Product.is_active.is_(True),
+        query.filter(
             Product.quantity <= Product.minimum_stock,
         )
         .order_by(Product.quantity.asc(), Product.name.asc())
@@ -90,13 +97,13 @@ def get_low_stock(db: Session, limit: int = 10) -> dict[str, Any]:
 
 def get_stock_coverage(
     db: Session, days: int = DEFAULT_DAYS, limit: int = 10,
-    warning_days: int = 7,
+    warning_days: int = 7, shop_id: int | None = None,
 ) -> dict[str, Any]:
     """Calculate remaining days from saleable batch stock and sales velocity."""
     _validate(days, limit)
     if not 1 <= warning_days <= 90:
         raise ValueError("warning_days must be between 1 and 90")
-    sales, saleable = _sales_subquery(db, days), _saleable_subquery(db)
+    sales, saleable = _sales_subquery(db, days, shop_id), _saleable_subquery(db, shop_id)
     rows = (
         db.query(
             Product,
@@ -105,7 +112,7 @@ def get_stock_coverage(
         )
         .outerjoin(saleable, Product.id == saleable.c.product_id)
         .outerjoin(sales, Product.id == sales.c.product_id)
-        .filter(Product.is_active.is_(True))
+        .filter(Product.is_active.is_(True), *([Product.shop_id == shop_id] if shop_id is not None else []))
         .order_by(Product.name.asc())
         .limit(limit)
         .all()
@@ -144,16 +151,16 @@ def get_stock_coverage(
     }
 
 
-def get_dead_stock(db: Session, days: int = 90, limit: int = 10) -> dict[str, Any]:
+def get_dead_stock(db: Session, days: int = 90, limit: int = 10, shop_id: int | None = None) -> dict[str, Any]:
     """Find mature active products with positive stock and no recorded sales."""
     _validate(days, limit)
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    sales = _sales_subquery(db, days)
+    sales = _sales_subquery(db, days, shop_id)
     rows = (
         db.query(Product)
         .outerjoin(sales, Product.id == sales.c.product_id)
         .filter(
-            Product.is_active.is_(True), Product.quantity > 0,
+            Product.is_active.is_(True), *([Product.shop_id == shop_id] if shop_id is not None else []), Product.quantity > 0,
             Product.created_at <= cutoff,
             func.coalesce(sales.c.units_sold, 0) == 0,
         )
@@ -171,17 +178,17 @@ def get_dead_stock(db: Session, days: int = 90, limit: int = 10) -> dict[str, An
 
 
 def get_movement_products(
-    db: Session, movement: str, days: int = DEFAULT_DAYS, limit: int = 10,
+    db: Session, movement: str, days: int = DEFAULT_DAYS, limit: int = 10, shop_id: int | None = None,
 ) -> dict[str, Any]:
     """Rank mature products with sales; slow-moving means lowest positive sales."""
     _validate(days, limit)
     if movement not in {"fast_moving", "slow_moving"}:
         raise ValueError("movement must be fast_moving or slow_moving")
-    cutoff, sales = datetime.now(timezone.utc) - timedelta(days=days), _sales_subquery(db, days)
+    cutoff, sales = datetime.now(timezone.utc) - timedelta(days=days), _sales_subquery(db, days, shop_id)
     query = (
         db.query(Product, func.coalesce(sales.c.units_sold, 0).label("units_sold"))
         .outerjoin(sales, Product.id == sales.c.product_id)
-        .filter(Product.is_active.is_(True), Product.created_at <= cutoff,
+        .filter(Product.is_active.is_(True), *([Product.shop_id == shop_id] if shop_id is not None else []), Product.created_at <= cutoff,
                  func.coalesce(sales.c.units_sold, 0) > 0)
     )
     ordering = (func.coalesce(sales.c.units_sold, 0).desc()
@@ -199,7 +206,7 @@ def get_movement_products(
 
 
 def get_expiry_intelligence(
-    db: Session, days: int = 60, limit: int = 10,
+    db: Session, days: int = 60, limit: int = 10, shop_id: int | None = None,
 ) -> dict[str, Any]:
     """Return expired and soon-to-expire batches with positive remaining quantity."""
     _validate(days, limit)
@@ -207,7 +214,7 @@ def get_expiry_intelligence(
     rows = (
         db.query(ProductBatch, Product)
         .join(Product, Product.id == ProductBatch.product_id)
-        .filter(Product.is_active.is_(True), ProductBatch.quantity > 0,
+        .filter(Product.is_active.is_(True), *([Product.shop_id == shop_id] if shop_id is not None else []), ProductBatch.quantity > 0,
                 ProductBatch.expiry_date <= horizon)
         .order_by(ProductBatch.expiry_date.asc(), Product.name.asc())
         .limit(limit).all()
@@ -227,12 +234,13 @@ def get_expiry_intelligence(
             "count": len(batches), "batches": batches}
 
 
-def get_data_readiness(db: Session) -> dict[str, Any]:
+def get_data_readiness(db: Session, shop_id: int | None = None) -> dict[str, Any]:
     """Assess active-product maturity and whether recent sales are recorded."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-    total = db.query(func.count(Product.id)).filter(Product.is_active.is_(True)).scalar() or 0
+    tenant_filter = [Product.shop_id == shop_id] if shop_id is not None else []
+    total = db.query(func.count(Product.id)).filter(Product.is_active.is_(True), *tenant_filter).scalar() or 0
     mature = db.query(func.count(Product.id)).filter(
-        Product.is_active.is_(True), Product.created_at <= cutoff
+        Product.is_active.is_(True), *tenant_filter, Product.created_at <= cutoff
     ).scalar() or 0
     sales_filter = (
         Product.is_active.is_(True), StockMovement.movement_type == "sale",
@@ -240,7 +248,7 @@ def get_data_readiness(db: Session) -> dict[str, Any]:
     )
     with_sales = db.query(func.count(func.distinct(StockMovement.product_id))).join(
         Product, Product.id == StockMovement.product_id
-    ).filter(*sales_filter).scalar() or 0
+    ).filter(*sales_filter, *tenant_filter).scalar() or 0
     units = db.query(func.coalesce(func.sum(-StockMovement.quantity_change), 0)).join(
         Product, Product.id == StockMovement.product_id
     ).filter(*sales_filter).scalar() or 0
@@ -269,12 +277,12 @@ def get_data_readiness(db: Session) -> dict[str, Any]:
     }
 
 
-def get_inventory_health(db: Session, days: int = DEFAULT_DAYS) -> dict[str, Any]:
+def get_inventory_health(db: Session, days: int = DEFAULT_DAYS, shop_id: int | None = None) -> dict[str, Any]:
     """Summarize saleable-stock status and expiry/data-readiness indicators."""
     _validate(days, MAX_LIMIT)
-    coverage = get_stock_coverage(db, days=days, limit=MAX_LIMIT)
-    expiry = get_expiry_intelligence(db, days=60, limit=MAX_LIMIT)
-    readiness = get_data_readiness(db)
+    coverage = get_stock_coverage(db, days=days, limit=MAX_LIMIT, shop_id=shop_id)
+    expiry = get_expiry_intelligence(db, days=60, limit=MAX_LIMIT, shop_id=shop_id)
+    readiness = get_data_readiness(db, shop_id=shop_id)
     statuses = [p["stock_status"] for p in coverage["products"]]
     return {
         "analysis": "inventory_health", "analysis_period_days": days,
@@ -292,21 +300,21 @@ def get_inventory_health(db: Session, days: int = DEFAULT_DAYS) -> dict[str, Any
 
 
 def analyze_inventory(
-    db: Session, intent: str, days: int = DEFAULT_DAYS, limit: int = 10,
+    db: Session, intent: str, days: int = DEFAULT_DAYS, limit: int = 10, shop_id: int | None = None,
 ) -> dict[str, Any]:
     """Route a supported agent intent to its deterministic read-only analysis."""
     if intent == "low_stock":
-        return get_low_stock(db, limit)
+        return get_low_stock(db, limit, shop_id)
     if intent == "stock_coverage":
-        return get_stock_coverage(db, days, limit)
+        return get_stock_coverage(db, days, limit, shop_id=shop_id)
     if intent == "dead_stock":
-        return get_dead_stock(db, days, limit)
+        return get_dead_stock(db, days, limit, shop_id)
     if intent in {"fast_moving", "slow_moving"}:
-        return get_movement_products(db, intent, days, limit)
+        return get_movement_products(db, intent, days, limit, shop_id)
     if intent == "expiry":
-        return get_expiry_intelligence(db, days, limit)
+        return get_expiry_intelligence(db, days, limit, shop_id)
     if intent == "data_readiness":
-        return get_data_readiness(db)
+        return get_data_readiness(db, shop_id)
     if intent == "inventory_health":
-        return get_inventory_health(db, days)
+        return get_inventory_health(db, days, shop_id)
     raise ValueError(f"Unsupported inventory intent: {intent}")
