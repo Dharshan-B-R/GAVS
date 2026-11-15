@@ -1969,25 +1969,15 @@ if (showMessage) {
             PopupMenuButton<String>(
 
               onSelected: (value) {
-
-                if (value == 'delete') {
-
+                if (value == 'edit') {
+                  showEditProductDialog(product);
+                } else if (value == 'delete') {
                   deleteProduct(product);
-
                 }
-
               },
-
               itemBuilder: (context) => const [
-
-                PopupMenuItem(
-
-                  value: 'delete',
-
-                  child: Text('Delete product'),
-
-                ),
-
+                PopupMenuItem(value: 'edit', child: Text('Edit product details')),
+                PopupMenuItem(value: 'delete', child: Text('Archive product')),
               ],
 
             ),
@@ -2021,6 +2011,21 @@ if (showMessage) {
       if (changed == true) await loadBackendData();
     } catch (error) {
       if (mounted) showSnackBar('Could not load inventory batches: $error', isError: true);
+    }
+  }
+
+  Future<void> showEditProductDialog(Product product) async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => EditProductDialog(product: product),
+    );
+    if (result == null) return;
+    try {
+      await ApiService.updateProduct(product.id, result);
+      await loadBackendData();
+      if (mounted) showSnackBar('Product details updated.');
+    } catch (error) {
+      if (mounted) showSnackBar('Product update failed: $error', isError: true);
     }
   }
 
@@ -4087,6 +4092,97 @@ class _BatchVerificationDialogState extends State<BatchVerificationDialog> {
     ),
     actions: [
       TextButton(onPressed: () => Navigator.pop(context, _changed), child: const Text('Done')),
+    ],
+  );
+}
+
+
+class EditProductDialog extends StatefulWidget {
+  const EditProductDialog({super.key, required this.product});
+  final Product product;
+
+  @override
+  State<EditProductDialog> createState() => _EditProductDialogState();
+}
+
+class _EditProductDialogState extends State<EditProductDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _name;
+  late final TextEditingController _category;
+  late final TextEditingController _minimum;
+  late final TextEditingController _purchase;
+  late final TextEditingController _selling;
+  late final TextEditingController _unit;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.product.name);
+    _category = TextEditingController(text: widget.product.category);
+    _minimum = TextEditingController(text: widget.product.minimumStock.toString());
+    _purchase = TextEditingController(text: widget.product.purchasePrice.toString());
+    _selling = TextEditingController(text: widget.product.sellingPrice.toString());
+    _unit = TextEditingController(text: widget.product.unit);
+  }
+
+  @override
+  void dispose() {
+    _name.dispose(); _category.dispose(); _minimum.dispose();
+    _purchase.dispose(); _selling.dispose(); _unit.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    if (!_formKey.currentState!.validate()) return;
+    Navigator.pop(context, {
+      'name': _name.text.trim(),
+      'category': _category.text.trim(),
+      'minimum_stock': double.parse(_minimum.text.trim()),
+      'purchase_price': double.parse(_purchase.text.trim()),
+      'selling_price': double.parse(_selling.text.trim()),
+      'unit': _unit.text.trim(),
+    });
+  }
+
+  Widget _field(TextEditingController controller, String label, {bool numeric = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: TextFormField(
+        controller: controller,
+        keyboardType: numeric ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
+        decoration: InputDecoration(labelText: label),
+        validator: (value) {
+          final text = value?.trim() ?? '';
+          if (text.isEmpty) return 'Enter $label';
+          if (numeric) {
+            final parsed = double.tryParse(text);
+            if (parsed == null || !parsed.isFinite || parsed < 0) return 'Enter a valid number';
+          }
+          return null;
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Edit product'),
+    content: SizedBox(width: 420, child: Form(
+      key: _formKey,
+      child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        _field(_name, 'Product name'),
+        _field(_category, 'Category'),
+        _field(_minimum, 'Minimum stock', numeric: true),
+        _field(_purchase, 'Purchase price', numeric: true),
+        _field(_selling, 'Selling price', numeric: true),
+        _field(_unit, 'Unit'),
+        const Text('Recorded quantity is changed only through audited batch operations.',
+          style: TextStyle(color: Colors.black54)),
+      ])),
+    )),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+      FilledButton(onPressed: _save, child: const Text('Save changes')),
     ],
   );
 }
