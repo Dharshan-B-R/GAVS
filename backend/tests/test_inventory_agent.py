@@ -138,3 +138,17 @@ def test_inventory_intent_strips_clarification_text():
     )
 
     assert result.clarification == "Please clarify your inventory question."
+
+
+def test_festival_question_routes_to_seasonal_intelligence():
+    from app.agents.orchestrator import route_question
+
+    plan = route_question("Show festival demand patterns")
+    assert "seasonal" in plan["agents"]
+
+
+def test_stockout_question_routes_to_stockout_intelligence():
+    from app.agents.orchestrator import route_question
+
+    plan = route_question("Which products are running out?")
+    assert "stockout" in plan["agents"]
