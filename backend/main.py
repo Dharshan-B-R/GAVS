@@ -413,6 +413,7 @@ def create_product_batch(
     batch_data: dict = Body(...),
     shop_id: int = Query(..., gt=0),
     membership=Depends(require_shop_staff),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     try:
@@ -485,7 +486,7 @@ def create_product_batch(
             )
 
         # Validate audit information
-        performed_by = batch_data.get("performed_by")
+        performed_by = current_user.id
         reference_type = batch_data.get(
             "reference_type", "purchase"
         )
@@ -3301,6 +3302,7 @@ def create_purchase(
     purchase_data: PurchaseCreate,
     shop_id: int = Query(..., gt=0),
     membership=Depends(require_shop_staff),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     try:
@@ -3464,6 +3466,7 @@ def create_purchase(
                 quantity_before=previous_stock,
                 quantity_after=product.quantity,
                 reason=f"Supplier purchase #{purchase.id}",
+                performed_by=current_user.id,
                 reference_type="purchase",
                 reference_id=purchase.id
             )
