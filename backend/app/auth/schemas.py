@@ -87,3 +87,13 @@ class UserResponse(BaseModel):
     role: str
     supplier_id: Optional[int] = None
     is_active: bool
+
+
+class EmployeeInviteCreate(BaseModel):
+    email: EmailStr
+
+
+class EmployeeInviteAccept(BaseModel):
+    invitation_token: str = Field(min_length=20, max_length=200)
+    full_name: str = Field(min_length=2, max_length=150)
+    password: str = Field(min_length=8, max_length=128)
