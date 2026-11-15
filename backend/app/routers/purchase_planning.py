@@ -222,13 +222,22 @@ def decide_purchase_proposal(
         ).with_for_update().first()
         if budget is None:
             raise HTTPException(409, "Shop purchase budget is not configured")
-        if proposal.total_amount > budget.available_amount:
+        # Reserve budget already committed to other approved or ordered
+        # proposals. Locking the budget row serializes owner approvals per shop.
+        committed_rows = db.query(PurchaseProposal.total_amount).filter(
+            PurchaseProposal.shop_id == shop_id,
+            PurchaseProposal.status.in_(["approved", "ordered"]),
+        ).all()
+        committed_amount = sum((row[0] for row in committed_rows), Decimal("0.00"))
+        remaining_budget = budget.available_amount - committed_amount
+        if proposal.total_amount > remaining_budget:
             raise HTTPException(
                 409,
                 detail={
-                    "message": "Proposal exceeds the current available cash budget",
+                    "message": "Proposal exceeds the remaining uncommitted cash budget",
                     "proposal_total": str(proposal.total_amount),
-                    "available_budget": str(budget.available_amount),
+                    "committed_amount": str(committed_amount),
+                    "remaining_budget": str(remaining_budget),
                 },
             )
         proposal.status = "approved"
