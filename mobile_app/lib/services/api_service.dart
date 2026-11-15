@@ -294,30 +294,12 @@ class ApiService {
     int warningDays = 7,
   }) async {
     final shopId = await _requireActiveShopId();
-    final uri = Uri.parse(
-      '$baseUrl/inventory/restock-recommendations',
-    ).replace(
-      queryParameters: {
-        'shop_id': shopId.toString(),
+    return _requestJson('GET',
+      '/shops/$shopId/agents/reorder-recommendations',
+      query: {
         'days': days.toString(),
-        'warning_days': warningDays.toString(),
-      },
-    );
-
-    final response = await http
-        .get(
-          uri,
-          headers: await _authorizedHeaders(),
-        )
-        .timeout(timeoutDuration);
-
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    }
-
-    throw Exception(
-      'Unable to load restock recommendations: ${response.body}',
-    );
+        'lead_time_days': warningDays.toString(),
+      });
   }
 
   /// FUNCTION: Add New Product.
