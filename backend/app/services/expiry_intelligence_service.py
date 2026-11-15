@@ -37,7 +37,6 @@ def analyze_expiry_risk(
             ProductBatch.expiry_date <= horizon,
         )
         .order_by(ProductBatch.expiry_date.asc(), Product.name.asc())
-        .limit(limit)
         .all()
     )
 
@@ -51,27 +50,28 @@ def analyze_expiry_risk(
         exposure = quantity * unit_cost
         total_at_risk_quantity += quantity
         estimated_cost_exposure += exposure
-        batches.append({
-            "batch_id": batch.id,
-            "product_id": product.id,
-            "product_name": product.name,
-            "batch_number": batch.batch_number,
-            "expiry_date": batch.expiry_date.isoformat(),
-            "days_to_expiry": days_remaining,
-            "quantity": round(quantity, 3),
-            "unit": product.unit,
-            "unit_cost": round(unit_cost, 2),
-            "estimated_cost_exposure": round(exposure, 2),
-            "is_verified": bool(batch.is_verified),
-            "status": "expired" if days_remaining < 0 else (
-                "expires_today" if days_remaining == 0 else "expiring_soon"
-            ),
-            "action_hint": (
-                "Review immediately; batch is past its expiry date"
-                if days_remaining < 0 else
-                "Prioritize sale, supplier return, or approved disposal review"
-            ),
-        })
+        if len(batches) < limit:
+            batches.append({
+                "batch_id": batch.id,
+                "product_id": product.id,
+                "product_name": product.name,
+                "batch_number": batch.batch_number,
+                "expiry_date": batch.expiry_date.isoformat(),
+                "days_to_expiry": days_remaining,
+                "quantity": round(quantity, 3),
+                "unit": product.unit,
+                "unit_cost": round(unit_cost, 2),
+                "estimated_cost_exposure": round(exposure, 2),
+                "is_verified": bool(batch.is_verified),
+                "status": "expired" if days_remaining < 0 else (
+                    "expires_today" if days_remaining == 0 else "expiring_soon"
+                ),
+                "action_hint": (
+                    "Review immediately; batch is past its expiry date"
+                    if days_remaining < 0 else
+                    "Prioritize sale, supplier return, or approved disposal review"
+                ),
+            })
 
     # Only completed, owner-approved disposals count as realized loss.
     # Pending requests reserve stock but are not completed losses. Supplier
@@ -114,8 +114,9 @@ def analyze_expiry_risk(
         "shop_id": shop_id,
         "as_of": today.isoformat(),
         "horizon_days": horizon_days,
-        "batch_count": len(batches),
-        "at_risk_batch_count": len(batches),
+        "batch_count": len(rows),
+        "at_risk_batch_count": len(rows),
+        "returned_batch_count": len(batches),
         "total_at_risk_quantity": round(total_at_risk_quantity, 3),
         "estimated_cost_exposure": round(estimated_cost_exposure, 2),
         "recorded_expiry_action_count": int(disposal_rows[1] or 0),
