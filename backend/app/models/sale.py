@@ -1,4 +1,3 @@
-
 # ---------------------------------------------------------
 # MODEL: Sale
 # Purpose:
@@ -16,14 +15,12 @@ from app.database import Base
 class Sale(Base):
     __tablename__ = "sales"
 
-    id = Column(Integer, primary_key=True, index=True)\n\n    shop_id = Column(Integer, ForeignKey("shops.id", ondelete="RESTRICT"), nullable=False, index=True)
+    id = Column(Integer, primary_key=True, index=True)
+    shop_id = Column(Integer, ForeignKey("shops.id", ondelete="RESTRICT"), nullable=False, index=True)
 
     total_amount = Column(Float, nullable=False, default=0)
-
     discount_amount = Column(Float, nullable=False, default=0)
-
     payment_method = Column(String(30), nullable=True)
-
     notes = Column(String(500), nullable=True)
 
     created_at = Column(
@@ -31,7 +28,6 @@ class Sale(Base):
         server_default=func.now()
     )
 
-    # Relationship with individual sale items
     items = relationship(
         "SaleItem",
         back_populates="sale",
