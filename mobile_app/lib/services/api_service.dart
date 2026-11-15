@@ -572,6 +572,12 @@ class ApiService {
     return _requestJson('POST', '/shops/$shopId/inventory/adjustments', body: body);
   }
 
+  static Future<Map<String, dynamic>> setEmployeeStatus(int userId, bool active) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PATCH', '/shops/$shopId/employees/$userId/status',
+      body: {'is_active': active});
+  }
+
   static Future<List<dynamic>> getEmployees() async {
     final shopId = await _requireActiveShopId();
     return _requestList('/shops/$shopId/employees');
@@ -588,8 +594,13 @@ class ApiService {
     required String fullName,
     required String password,
   }) async {
-    return _requestJson('POST', '/auth/employees/accept-invitation',
+    final result = await _requestJson('POST', '/auth/employees/accept-invitation',
       body: {'invitation_token': token, 'full_name': fullName, 'password': password});
+    final accessToken = result['access_token']?.toString();
+    if (accessToken != null && accessToken.isNotEmpty) {
+      await _secureStorage.write(key: _tokenKey, value: accessToken);
+    }
+    return result;
   }
 
   static Future<List<dynamic>> getSupplierOrders() async =>
