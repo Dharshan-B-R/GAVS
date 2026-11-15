@@ -299,6 +299,16 @@ class _LoginScreenState extends State<LoginScreen> {
                               : const Text('Sign in'),
                         ),
                       ),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: _busy ? null : () async {
+                          final registered = await Navigator.of(context).push<bool>(
+                            MaterialPageRoute(builder: (_) => const RegistrationScreen()),
+                          );
+                          if (registered == true && mounted) widget.onLogin();
+                        },
+                        child: const Text('Create an Owner or Supplier account'),
+                      ),
                     ],
                   ),
                 ),
@@ -3577,6 +3587,121 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
               style: TextStyle(color: Colors.black54))),
         ]),
       ),
+    );
+  }
+}
+
+
+class RegistrationScreen extends StatefulWidget {
+  const RegistrationScreen({super.key});
+
+  @override
+  State<RegistrationScreen> createState() => _RegistrationScreenState();
+}
+
+class _RegistrationScreenState extends State<RegistrationScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _name = TextEditingController();
+  final _email = TextEditingController();
+  final _phone = TextEditingController();
+  final _password = TextEditingController();
+  final _businessName = TextEditingController();
+  final _address = TextEditingController();
+  bool _supplier = false;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose(); _email.dispose(); _phone.dispose(); _password.dispose();
+    _businessName.dispose(); _address.dispose();
+    super.dispose();
+  }
+
+  Future<void> _register() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() { _busy = true; _error = null; });
+    try {
+      if (_supplier) {
+        await ApiService.registerSupplier({
+          'full_name': _name.text.trim(),
+          'email': _email.text.trim(),
+          'phone': _phone.text.trim().isEmpty ? null : _phone.text.trim(),
+          'password': _password.text,
+          'business_name': _businessName.text.trim(),
+          'contact_person': _name.text.trim(),
+          'address': _address.text.trim().isEmpty ? null : _address.text.trim(),
+        });
+      } else {
+        await ApiService.registerOwner({
+          'full_name': _name.text.trim(),
+          'email': _email.text.trim(),
+          'phone': _phone.text.trim().isEmpty ? null : _phone.text.trim(),
+          'password': _password.text,
+          'shop_name': _businessName.text.trim(),
+          'shop_address': _address.text.trim().isEmpty ? null : _address.text.trim(),
+        });
+      }
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Create account')),
+      body: Center(child: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: Card(child: Padding(padding: const EdgeInsets.all(20),
+            child: Form(key: _formKey, child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment(value: false, label: Text('Shop Owner'), icon: Icon(Icons.store)),
+                    ButtonSegment(value: true, label: Text('Supplier'), icon: Icon(Icons.local_shipping)),
+                  ],
+                  selected: {_supplier},
+                  onSelectionChanged: (value) => setState(() => _supplier = value.first),
+                ),
+                const SizedBox(height: 16),
+                TextFormField(controller: _name,
+                  decoration: const InputDecoration(labelText: 'Full name'),
+                  validator: (v) => (v == null || v.trim().length < 2) ? 'Enter your name' : null),
+                TextFormField(controller: _email,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(labelText: 'Email'),
+                  validator: (v) => (v == null || !v.contains('@')) ? 'Enter a valid email' : null),
+                TextFormField(controller: _phone,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(labelText: 'Phone (optional)')),
+                TextFormField(controller: _password, obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Password (minimum 8 characters)'),
+                  validator: (v) => (v == null || v.length < 8) ? 'Use at least 8 characters' : null),
+                TextFormField(controller: _businessName,
+                  decoration: InputDecoration(labelText: _supplier ? 'Business name' : 'Shop name'),
+                  validator: (v) => (v == null || v.trim().length < 2) ? 'Enter a name' : null),
+                TextFormField(controller: _address,
+                  decoration: InputDecoration(labelText: _supplier ? 'Business address' : 'Shop address')),
+                if (_error != null) Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(_error!, style: const TextStyle(color: Colors.red))),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: _busy ? null : _register,
+                  child: Text(_busy ? 'Creating account...' : 'Create account'),
+                ),
+              ],
+            )),
+          )),
+        ),
+      )),
     );
   }
 }
