@@ -18,6 +18,8 @@ from app.models.shop_purchase_budget import ShopPurchaseBudget
 from app.models.purchase_proposal import PurchaseProposal
 from app.models.product import Product
 from app.models.supplier import Supplier
+from app.models.purchase import Purchase
+from app.models.purchase_item import PurchaseItem
 from app.models.shop_distributor_connection import ShopDistributorConnection
 
 
@@ -280,4 +282,97 @@ def decide_purchase_proposal(
             "Proposal approved. This is not a placed order."
             if payload.approve else "Proposal rejected. No order was placed."
         ),
+    }
+
+
+@router.post("/shops/{shop_id}/purchase-proposals/{proposal_id}/execute")
+def execute_approved_purchase_order(
+    shop_id: int,
+    proposal_id: int,
+    membership=Depends(require_shop_owner),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create one internal PO from an approved proposal; never receive stock here."""
+    proposal = db.query(PurchaseProposal).filter(
+        PurchaseProposal.id == proposal_id,
+        PurchaseProposal.shop_id == shop_id,
+    ).with_for_update().first()
+    if proposal is None:
+        raise HTTPException(404, "Purchase proposal not found")
+
+    # A retry after a successful request returns the same PO instead of
+    # creating a duplicate purchase or duplicating the committed amount.
+    existing = db.query(Purchase).filter(Purchase.proposal_id == proposal.id).first()
+    if existing is not None:
+        return {
+            "proposal_id": proposal.id, "purchase_id": existing.id,
+            "status": proposal.status, "purchase_status": existing.status,
+            "message": "This proposal already has a purchase order.",
+        }
+    if proposal.status != "approved":
+        raise HTTPException(409, "Only an owner-approved proposal can be executed")
+    if proposal.supplier_id is None:
+        raise HTTPException(409, "Select a connected supplier before approving and executing this proposal")
+
+    connection = db.query(ShopDistributorConnection).filter(
+        ShopDistributorConnection.shop_id == shop_id,
+        ShopDistributorConnection.supplier_id == proposal.supplier_id,
+        ShopDistributorConnection.is_active.is_(True),
+    ).first()
+    supplier = db.query(Supplier).filter(
+        Supplier.id == proposal.supplier_id, Supplier.is_active.is_(True)
+    ).first()
+    if connection is None or supplier is None:
+        raise HTTPException(409, "The proposal supplier is no longer active and connected to this shop")
+
+    snapshots = proposal.items or []
+    product_ids = [int(item["product_id"]) for item in snapshots]
+    products = db.query(Product).filter(
+        Product.shop_id == shop_id,
+        Product.is_active.is_(True),
+        Product.id.in_(product_ids),
+    ).all()
+    if len(products) != len(set(product_ids)):
+        raise HTTPException(409, "A proposed product is no longer active in this shop")
+    product_by_id = {product.id: product for product in products}
+
+    purchase = Purchase(
+        shop_id=shop_id,
+        proposal_id=proposal.id,
+        supplier_id=proposal.supplier_id,
+        invoice_number=f"KIRANAAI-PO-{proposal.id}",
+        total_amount=float(proposal.total_amount),
+        payment_status="pending",
+        status="ordered",
+        notes=f"Created from owner-approved KiranaAI proposal #{proposal.id}",
+    )
+    db.add(purchase)
+    db.flush()
+
+    for item in snapshots:
+        product_id = int(item["product_id"])
+        product = product_by_id[product_id]
+        db.add(PurchaseItem(
+            purchase_id=purchase.id,
+            product_id=product_id,
+            quantity=float(item["quantity"]),
+            unit_price=float(item["unit_price"]),
+            subtotal=float(item["subtotal"]),
+        ))
+
+    proposal.status = "ordered"
+    proposal.decision_note = (
+        (proposal.decision_note + " | ") if proposal.decision_note else ""
+    ) + f"Internal PO {purchase.invoice_number} created by user {current_user.id}"
+    db.commit()
+    db.refresh(purchase)
+    return {
+        "proposal_id": proposal.id,
+        "purchase_id": purchase.id,
+        "purchase_order_number": purchase.invoice_number,
+        "status": proposal.status,
+        "purchase_status": purchase.status,
+        "total_amount": str(proposal.total_amount),
+        "message": "Internal purchase order created. Stock was not increased; record goods receipt separately when delivered.",
     }
