@@ -2181,33 +2181,7 @@ if (showMessage) {
   /// Requests owner confirmation for the selected purchase plan.
   /// This is a local confirmation only; it does not place an order.
   Future<void> _approvePurchasePlan() async {
-    if (selectedRestockProducts.isEmpty) return;
-    final total = _selectedPurchaseTotal();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Confirm purchase plan'),
-        content: Text(
-             'You selected ${selectedRestockProducts.length} product(s). '
-            'Estimated total: ₹${total.toStringAsFixed(2)}.\n\n'
-            'This confirms your plan only. No order will be placed.',
-              ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Review again'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Confirm plan'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true && mounted) {
-      setState(() => purchasePlanApproved = true);
-      showSnackBar('Purchase plan approved for review. No order was placed.');
-    }
+    await _createPurchaseProposal();
   }
 
   /// Formats quantities without unnecessary decimal zeroes.
@@ -2237,6 +2211,50 @@ if (showMessage) {
           ),
           const SizedBox(height: 8),
           const Text('Review stock recommendations before planning purchases.'),
+          if (widget.userRole == 'owner') ...[
+            const SizedBox(height: 16),
+            Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Cash budget', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                TextField(controller: _budgetController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(labelText: 'Available purchase budget (INR)', prefixText: '₹', border: OutlineInputBorder())),
+                const SizedBox(height: 8),
+                Align(alignment: Alignment.centerRight, child: FilledButton(
+                  onPressed: _budgetSaving ? null : _savePurchaseBudget,
+                  child: Text(_budgetSaving ? 'Saving...' : 'Save budget'))),
+                const Divider(),
+                const Text('Connected suppliers', style: TextStyle(fontWeight: FontWeight.bold)),
+                if (_shopSuppliers.isEmpty)
+                  const Padding(padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Text('No suppliers connected yet. Enter an active supplier ID to connect one.')),
+                if (_shopSuppliers.isNotEmpty)
+                  DropdownButtonFormField<int>(
+                    value: _selectedSupplierId,
+                    decoration: const InputDecoration(labelText: 'Select supplier'),
+                    items: _shopSuppliers.map((raw) {
+                      final supplier = raw as Map<String, dynamic>;
+                      return DropdownMenuItem<int>(
+                        value: (supplier['supplier_id'] as num).toInt(),
+                        child: Text(supplier['name'].toString()),
+                      );
+                    }).toList(),
+                    onChanged: (value) => setState(() => _selectedSupplierId = value),
+                  ),
+                const SizedBox(height: 8),
+                Row(children: [
+                  Expanded(child: TextField(controller: _supplierIdController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Supplier ID to connect', border: OutlineInputBorder()))),
+                  const SizedBox(width: 8),
+                  FilledButton.tonal(onPressed: _connectSupplierById, child: const Text('Connect')),
+                ]),
+              ],
+            ))),
+            const SizedBox(height: 12),
+          ],
           const SizedBox(height: 20),
           if (isLoading || isRestockLoading)
             const LinearProgressIndicator(),
@@ -2396,7 +2414,51 @@ if (showMessage) {
               ),
             );
           }),
-          if (restockRecommendations.isNotEmpty) ...[
+          if (widget.userRole == 'owner' && _purchasePlanningLoading)
+            const LinearProgressIndicator(),
+          if (widget.userRole == 'owner' && _purchaseProposals.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            const Text('Purchase proposals', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            ..._purchaseProposals.map((raw) {
+              final proposal = raw as Map<String, dynamic>;
+              final id = (proposal['proposal_id'] as num).toInt();
+              final status = proposal['status'].toString();
+              final total = proposal['total_amount']?.toString() ?? '0.00';
+              return Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Proposal #$id · $status', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text('Total: ₹$total'),
+                  if (status == 'pending') Row(children: [
+                    TextButton(onPressed: () => _decideProposal(id, false), child: const Text('Reject')),
+                    const Spacer(),
+                    FilledButton(onPressed: () => _decideProposal(id, true), child: const Text('Approve')),
+                  ]),
+                  if (status == 'approved')
+                    SizedBox(width: double.infinity, child: FilledButton(
+                      onPressed: () => _executeProposal(id),
+                      child: const Text('Create internal purchase order'))),
+                ],
+              )));
+            }),
+          ],
+          if (widget.userRole == 'owner' && _purchaseOrders.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            const Text('Internal purchase orders', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            ..._purchaseOrders.map((raw) {
+              final order = raw as Map<String, dynamic>;
+              final status = order['status'].toString();
+              return Card(child: ListTile(
+                leading: const Icon(Icons.local_shipping_outlined),
+                title: Text(order['purchase_order_number']?.toString() ?? 'Purchase order'),
+                subtitle: Text('Status: $status · ₹${order['total_amount']}'),
+                trailing: (status == 'ordered' || status == 'confirmed')
+                    ? TextButton(onPressed: () => _receivePurchaseOrder(order), child: const Text('Receive'))
+                    : const Icon(Icons.check_circle, color: Colors.green),
+              ));
+            }),
+          ],
+          if (widget.userRole == 'owner' && restockRecommendations.isNotEmpty) ...[
             const SizedBox(height: 12),
             Card(
               child: Padding(
@@ -2425,14 +2487,14 @@ if (showMessage) {
                         onPressed: widget.userRole != 'owner' || selectedCount == 0
                             ? null : _approvePurchasePlan,
                         icon: const Icon(Icons.verified_outlined),
-                        label: const Text('Review and approve plan'),
+                        label: const Text('Create proposal for owner approval'),
                       ),
                     ),
                     if (widget.userRole == 'owner' && purchasePlanApproved)
                       const Padding(
                         padding: EdgeInsets.only(top: 10),
                         child: Text(
-                          'Plan approved for review. No order has been placed.',
+                          'Proposal created. Owner approval is required before an internal order can be created.',
                           style: TextStyle(
                             color: Colors.green,
                             fontWeight: FontWeight.w600,
@@ -2441,8 +2503,7 @@ if (showMessage) {
                       ),
                     const SizedBox(height: 8),
                     if (widget.userRole == 'owner') const Text(
-                      'KiranaAI does not place orders or contact suppliers. '
-                      'Owner approval here confirms the plan only.',
+                      'Creating a proposal does not place an order. Approve it first, then create an internal purchase order.',
                       style: TextStyle(color: Colors.black54),
                     ),
                   ],
