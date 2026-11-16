@@ -805,4 +805,50 @@ class ApiService {
   }
 
 
+  static Future<List<dynamic>> getIntelligenceAlerts({String status = 'open'}) async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/intelligence-alerts?status=${Uri.encodeQueryComponent(status)}');
+  }
+
+  static Future<Map<String, dynamic>> acknowledgeIntelligenceAlert(int alertId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PATCH', '/shops/$shopId/intelligence-alerts/$alertId/acknowledge');
+  }
+
+  static Future<List<dynamic>> getIntelligenceDailySummaries({int limit = 7}) async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/intelligence-daily-summaries?limit=$limit');
+  }
+
+  static Future<Map<String, dynamic>> generateIntelligenceDailySummary() async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/intelligence-daily-summaries/generate');
+  }
+
+  static Future<Map<String, dynamic>> submitRecommendationFeedback({
+    required String recommendationKey,
+    required String decision,
+    int? productId,
+    double? recommendedQuantity,
+    double? actualQuantity,
+    String? notes,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/recommendation-feedback', body: {
+      'recommendation_type': 'reorder',
+      'recommendation_key': recommendationKey,
+      'decision': decision,
+      'product_id': productId,
+      'recommended_quantity': recommendedQuantity,
+      'actual_quantity': actualQuantity,
+      'notes': notes,
+    });
+  }
+
+  static Future<List<dynamic>> getRecommendationFeedback({int limit = 100}) async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/recommendation-feedback?limit=$limit');
+  }
+
+
 }
