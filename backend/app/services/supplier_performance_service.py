@@ -5,17 +5,21 @@ received quantities. Legacy deliveries without promised dates remain outside the
 on-time denominator rather than being assumed punctual.
 """
 from collections import defaultdict
-from datetime import date
+from datetime import date, timezone
+from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.models.purchase import Purchase
 from app.models.supplier import Supplier
 from app.models.supplier_issue import SupplierIssue
+from app.models.shop import Shop
 
 
 def analyze_supplier_performance(db: Session, shop_id: int, limit: int = 100) -> dict:
     if not 1 <= limit <= 500:
         raise ValueError("limit must be between 1 and 500")
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+    local_tz = ZoneInfo(shop.timezone if shop and shop.timezone else "UTC")
     purchases = db.query(Purchase).filter(
         Purchase.shop_id == shop_id,
         Purchase.status.in_(["received", "partially_received"]),
@@ -33,7 +37,10 @@ def analyze_supplier_performance(db: Session, shop_id: int, limit: int = 100) ->
         item["orders"] += 1
         item["received_value"] += float(purchase.total_amount or 0)
         if purchase.received_at is not None:
-            received_day = purchase.received_at.date()
+            received_at = purchase.received_at
+            if received_at.tzinfo is None:
+                received_at = received_at.replace(tzinfo=timezone.utc)
+            received_day = received_at.astimezone(local_tz).date()
             item["first_receipt"] = min(item["first_receipt"], received_day) if item["first_receipt"] else received_day
             item["last_receipt"] = max(item["last_receipt"], received_day) if item["last_receipt"] else received_day
             if purchase.expected_delivery_date is not None:
