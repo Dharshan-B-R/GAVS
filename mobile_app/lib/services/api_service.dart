@@ -578,6 +578,11 @@ class ApiService {
     return _requestJson('POST', '/shops/$shopId/inventory/adjustments', body: body);
   }
 
+  static Future<Map<String, dynamic>> setEmployeeJobRole(int userId, String jobRole) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PATCH', '/shops/$shopId/employees/$userId/job-role', body: {'job_role': jobRole});
+  }
+
   static Future<Map<String, dynamic>> setEmployeeStatus(int userId, bool active) async {
     final shopId = await _requireActiveShopId();
     return _requestJson('PATCH', '/shops/$shopId/employees/$userId/status',
@@ -648,6 +653,13 @@ class ApiService {
 
   static Future<Map<String, dynamic>> confirmSupplierOrder(int purchaseId) async =>
       _requestJson('POST', '/supplier/orders/$purchaseId/confirm');
+
+  static Future<Map<String, dynamic>> updateSupplierOrderStatus(
+    int purchaseId, {required String status, String? note}) async =>
+      _requestJson('PATCH', '/supplier/orders/$purchaseId/status', body: {
+        'status': status,
+        'note': note,
+      });
 
   /// Run the Phase 2 read-only intelligence specialists for the active shop.
   /// The orchestrator returns structured evidence and never places orders.

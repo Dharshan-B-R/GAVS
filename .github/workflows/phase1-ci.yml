@@ -2,9 +2,9 @@ name: KiranaAI Phase 1 CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, phase2-intelligence-completion]
   pull_request:
-    branches: [main]
+    branches: [main, phase2-intelligence-completion]
 
 jobs:
   backend-tests:

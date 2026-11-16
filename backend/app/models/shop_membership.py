@@ -52,6 +52,7 @@ class ShopMembership(Base):
     )
 
     role = Column(String(20), nullable=False)
+    job_role = Column(String(30), nullable=False, default="manager", server_default="manager")
 
     is_active = Column(
         Boolean,

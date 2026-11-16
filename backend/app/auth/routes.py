@@ -19,6 +19,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Request,
     status,
 )
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -453,6 +454,7 @@ def require_shop_membership(*allowed_membership_roles: str):
 
     def membership_checker(
         shop_id: int,
+        request: Request,
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db),
     ):
@@ -483,6 +485,40 @@ def require_shop_membership(*allowed_membership_roles: str):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Your account role does not match your shop membership",
             )
+
+        # Enforce employee job profiles centrally for every endpoint using
+        # require_shop_staff. Owner-only endpoints remain protected separately.
+        if membership_role == "employee" and "employee" in allowed:
+            path = request.url.path.lower()
+            method = request.method.upper()
+            job_role = (membership.job_role or "manager").lower()
+
+            if job_role == "cashier":
+                is_sales = path.endswith("/sales") and method in {"GET", "POST"}
+                is_read_only_lookup = (
+                    method == "GET"
+                    and ("/products" in path or "/inventory" in path)
+                )
+                if not (is_sales or is_read_only_lookup):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Cashier access is limited to sales and read-only inventory lookup",
+                    )
+
+            elif job_role == "stock_manager":
+                allowed_stock_paths = (
+                    "/inventory/",
+                    "/products/",
+                    "/product-aliases",
+                    "/product-name-matches",
+                    "/sales",
+                    "/purchase-orders",
+                )
+                if not any(item in path for item in allowed_stock_paths):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Stock manager access is limited to inventory, products, sales and purchase-order visibility",
+                    )
 
         return membership
 
