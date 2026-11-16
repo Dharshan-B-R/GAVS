@@ -45,7 +45,7 @@ def forecast_demand(
         StockMovement.movement_type == "sale",
         StockMovement.quantity_change < 0,
         StockMovement.created_at >= start,
-        StockMovement.created_at <= end,
+        StockMovement.created_at < end,
     ).order_by(Product.name.asc(), StockMovement.created_at.asc())
 
     observations = defaultdict(lambda: {
