@@ -473,6 +473,10 @@ def create_recommendation_feedback(shop_id: int, payload: dict = Body(...),
         raise HTTPException(422, "recommendation_key must contain 1-180 characters")
     product_id = payload.get("product_id")
     if product_id is not None:
+        try:
+            product_id = int(product_id)
+        except (TypeError, ValueError):
+            raise HTTPException(422, "product_id must be an integer")
         product = db.query(Product).filter(
             Product.id == product_id, Product.shop_id == shop_id,
         ).first()
@@ -480,6 +484,7 @@ def create_recommendation_feedback(shop_id: int, payload: dict = Body(...),
             raise HTTPException(404, "Product not found in this shop")
     recommended_quantity = payload.get("recommended_quantity")
     actual_quantity = payload.get("actual_quantity")
+    normalized_quantities = {}
     for field, value in (("recommended_quantity", recommended_quantity), ("actual_quantity", actual_quantity)):
         if value is not None:
             try:
@@ -488,6 +493,7 @@ def create_recommendation_feedback(shop_id: int, payload: dict = Body(...),
                 raise HTTPException(422, f"{field} must be numeric")
             if not isfinite(numeric) or numeric < 0:
                 raise HTTPException(422, f"{field} must be non-negative")
+            normalized_quantities[field] = numeric
     if decision == "adjusted" and actual_quantity is None:
         raise HTTPException(422, "actual_quantity is required for adjusted feedback")
     feedback = RecommendationFeedback(
@@ -495,8 +501,8 @@ def create_recommendation_feedback(shop_id: int, payload: dict = Body(...),
         recommendation_type=recommendation_type,
         recommendation_key=recommendation_key,
         decision=decision,
-        recommended_quantity=recommended_quantity,
-        actual_quantity=actual_quantity,
+        recommended_quantity=normalized_quantities.get("recommended_quantity"),
+        actual_quantity=normalized_quantities.get("actual_quantity"),
         notes=(str(payload.get("notes") or "").strip()[:2000] or None),
         created_by_user_id=current_user.id,
     )
