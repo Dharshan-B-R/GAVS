@@ -35,7 +35,6 @@ def analyze_supplier_performance(db: Session, shop_id: int, limit: int = 100) ->
             continue
         item = grouped[purchase.supplier_id]
         item["orders"] += 1
-        item["received_value"] += float(purchase.total_amount or 0)
         if purchase.received_at is not None:
             received_at = purchase.received_at
             if received_at.tzinfo is None:
@@ -50,7 +49,9 @@ def analyze_supplier_performance(db: Session, shop_id: int, limit: int = 100) ->
         for line in purchase.items:
             item["lines"] += 1
             item["ordered_qty"] += float(line.ordered_quantity if line.ordered_quantity is not None else line.quantity or 0)
-            item["received_qty"] += float(line.received_quantity or 0)
+            line_received = float(line.received_quantity or 0)
+            item["received_qty"] += line_received
+            item["received_value"] += line_received * float(line.unit_price or 0)
 
     result = []
     for supplier_id, item in grouped.items():
