@@ -76,10 +76,10 @@ def list_shop_employees(
         "user_id": user.id,
         "full_name": user.full_name,
         "email": user.email,
-        "job_role": membership.job_role,
-        "is_active": membership.is_active and user.is_active,
-        "joined_at": membership.created_at,
-    } for membership, user in rows]
+        "job_role": shop_membership.job_role,
+        "is_active": shop_membership.is_active and user.is_active,
+        "joined_at": shop_membership.created_at,
+    } for shop_membership, user in rows]
 
 
 @router.patch("/shops/{shop_id}/employees/{user_id}/job-role")
