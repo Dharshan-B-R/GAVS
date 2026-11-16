@@ -3421,28 +3421,86 @@ if (showMessage) {
     return 'Shop data and evidence';
   }
 
+  String _intelligenceDescription(String key) {
+    switch (key.toLowerCase()) {
+      case 'expiry': return 'Products that are expired or approaching their expiry date.';
+      case 'dead_stock': return 'Products that have not been selling and may be tying up your money.';
+      case 'stockout': return 'Products that may run out soon and need restocking attention.';
+      case 'forecast': return 'Estimated future demand based on the sales history available.';
+      case 'seasonal': return 'Products whose demand may change with seasons or local events.';
+      case 'event_demand': return 'Demand patterns around the selected festival or local event.';
+      case 'reorder_recommendations': return 'Suggested products and quantities to consider buying.';
+      case 'supplier_prices': return 'Supplier price information that can help compare buying options.';
+      case 'supplier_performance': return 'Delivery and supply reliability based on recorded purchase history.';
+      case 'suppliers': return 'Suppliers currently connected to this shop.';
+      case 'financial_position': return 'A shop-level view of cash, credit and outstanding amounts.';
+      case 'inventory': return 'A summary of current stock and inventory movement.';
+      default: return 'A shop insight based on the information recorded so far.';
+    }
+  }
+
+  String _intelligenceAction(String key) {
+    switch (key.toLowerCase()) {
+      case 'expiry': return 'What to do: Check the listed batches first. Prioritise already-expired items and items expiring soon.';
+      case 'dead_stock': return 'What to do: Review these products before ordering more. Consider a promotion or a smaller future purchase.';
+      case 'stockout': return 'What to do: Check shelf and back-room stock, then consider restocking the products at risk.';
+      case 'forecast': return 'What to do: Use this as a planning estimate, compare it with recent sales, and adjust for local demand.';
+      case 'seasonal': return 'What to do: Prepare early for products with rising seasonal or festival demand.';
+      case 'event_demand': return 'What to do: Compare the event period with normal sales before deciding how much extra stock to buy.';
+      case 'reorder_recommendations': return 'What to do: Review the suggested quantities and your purchase budget. This does not place an order.';
+      case 'supplier_prices': return 'What to do: Compare prices, quality and delivery terms before choosing a supplier.';
+      case 'supplier_performance': return 'What to do: Review late or short deliveries before placing your next order.';
+      case 'suppliers': return 'What to do: Connect suppliers in Purchasing or Settings to unlock supplier comparisons.';
+      case 'financial_position': return 'What to do: Review outstanding customer credit and upcoming payments before committing cash.';
+      default: return 'What to do: Open the insight and review the evidence before taking action.';
+    }
+  }
+
+  String _intelligenceSummary(Map<String, dynamic> data) {
+    final status = data['status'];
+    if (status != null) return _intelligenceLabel(status.toString());
+    for (final key in ['batches', 'items', 'products', 'recommendations', 'risks']) {
+      final rows = data[key];
+      if (rows is List) return rows.isEmpty ? 'Nothing needs attention right now' : '${rows.length} ${_intelligenceLabel(key).toLowerCase()} to review';
+    }
+    final count = data['count'];
+    if (count is num) return count == 0 ? 'No matching records yet' : '$count results';
+    if (data['message'] != null) return data['message'].toString();
+    return 'Open to review this insight';
+  }
+
   Widget _intelligenceResultCard(String key, dynamic value) {
     final data = value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{'result': value};
-    final body = const JsonEncoder.withIndent('  ').convert(value);
-    final highlights = data.entries.where((entry) => entry.value != null && entry.value is! Map && entry.value is! List && entry.key != 'analysis' && entry.key != 'message').take(5).toList();
-    final listCounts = data.entries.where((entry) => entry.value is List).toList();
+    const hiddenKeys = {'shop_id', 'product_id', 'supplier_id', 'batch_id', 'count', 'limitations', 'analysis', 'status', 'message', 'generated_at', 'as_of_date'};
+    final highlights = data.entries.where((entry) => entry.value != null && entry.value is! Map && entry.value is! List && !hiddenKeys.contains(entry.key)).take(4).toList();
+    final listEntries = data.entries.where((entry) => entry.value is List && (entry.value as List).isNotEmpty).toList();
     return Card(clipBehavior: Clip.antiAlias, child: ExpansionTile(
-      leading: const Icon(Icons.insights_outlined),
+      leading: const Icon(Icons.auto_awesome_outlined),
       title: Text(_intelligenceLabel(key), style: const TextStyle(fontWeight: FontWeight.w600)),
       subtitle: Text(_intelligenceSummary(data)),
       children: [
-        if (highlights.isNotEmpty || listCounts.isNotEmpty)
-          Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 12), child: Wrap(
-            spacing: 8, runSpacing: 8,
-            children: [
-              ...highlights.map((entry) => Chip(avatar: const Icon(Icons.analytics_outlined, size: 16), label: Text('${_intelligenceLabel(entry.key)}: ${_intelligenceDisplayValue(entry.value)}'))),
-              ...listCounts.map((entry) => Chip(avatar: const Icon(Icons.list_alt, size: 16), label: Text('${_intelligenceLabel(entry.key)}: ${(entry.value as List).length}'))),
-            ],
-          )),
-        if (data['message'] != null) Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 12), child: Align(alignment: Alignment.centerLeft, child: Text(data['message'].toString()))),
-        ExpansionTile(leading: const Icon(Icons.code, size: 18), title: const Text('Technical details'), children: [
-          Padding(padding: const EdgeInsets.all(14), child: Align(alignment: Alignment.centerLeft, child: SelectableText(body))),
-        ]),
+        Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 8), child: Align(alignment: Alignment.centerLeft, child: Text(_intelligenceDescription(key)))),
+        if (highlights.isNotEmpty) Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 8), child: Wrap(
+          spacing: 8, runSpacing: 8,
+          children: highlights.map((entry) => Chip(label: Text('${_intelligenceLabel(entry.key)}: ${_intelligenceDisplayValue(entry.value)}'))).toList(),
+        )),
+        ...listEntries.expand((entry) {
+          final rows = entry.value as List;
+          return [
+            Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 4), child: Align(alignment: Alignment.centerLeft, child: Text(_intelligenceLabel(entry.key), style: const TextStyle(fontWeight: FontWeight.w600)))),
+            ...rows.take(8).map((raw) {
+              if (raw is! Map) return ListTile(dense: true, title: Text(raw.toString()));
+              final row = Map<String, dynamic>.from(raw);
+              const rowHidden = {'id', 'product_id', 'supplier_id', 'batch_id', 'shop_id'};
+              final visible = row.entries.where((item) => item.value != null && item.value is! Map && item.value is! List && !rowHidden.contains(item.key)).take(3).toList();
+              final title = row['product_name'] ?? row['name'] ?? row['title'] ?? row['batch_number'] ?? 'Item to review';
+              final subtitle = visible.where((item) => item.key != 'product_name' && item.key != 'name' && item.key != 'title' && item.key != 'batch_number').map((item) => '${_intelligenceLabel(item.key)}: ${_intelligenceDisplayValue(item.value)}').join(' · ');
+              return ListTile(dense: true, leading: const Icon(Icons.inventory_2_outlined), title: Text(title.toString()), subtitle: subtitle.isEmpty ? null : Text(subtitle));
+            }),
+            if (rows.length > 8) Padding(padding: const EdgeInsets.all(12), child: Text('Showing 8 of ${rows.length} items.')),
+          ];
+        }),
+        Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 16), child: Align(alignment: Alignment.centerLeft, child: Text(_intelligenceAction(key), style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w500)))),
       ],
     ));
   }
