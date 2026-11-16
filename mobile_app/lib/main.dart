@@ -526,6 +526,11 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
         _activeShopId = (active?['shop_id'] as num?)?.toInt();
         _activeShopName = active?['name']?.toString();
       });
+      if (shops.isNotEmpty) {
+        _loadPhase2Intelligence();
+        _loadIntelligenceContext();
+        _loadSalesHistory();
+      }
     } catch (error) {
       if (mounted) showSnackBar('Could not load shop memberships: $error', isError: true);
     }
@@ -4074,7 +4079,7 @@ if (showMessage) {
           return Card(child: ListTile(
             leading: const CircleAvatar(child: Icon(Icons.person_outline)),
             title: Text(customer['name']?.toString() ?? 'Customer'),
-            subtitle: Text(customer['phone']?.toString() ?? 'Phone not added'),
+            subtitle: Text('${customer['phone'] ?? 'Phone not added'} · Due ₹${customer['outstanding_amount'] ?? customer['balance'] ?? 0}'),
             trailing: const Icon(Icons.receipt_long_outlined),
             onTap: () => _openKhataLedger(id),
           ));
