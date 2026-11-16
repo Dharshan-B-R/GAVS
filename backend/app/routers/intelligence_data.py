@@ -19,6 +19,10 @@ from app.models.supplier import Supplier
 from app.models.supplier_issue import SupplierIssue
 from app.models.shop_distributor_connection import ShopDistributorConnection
 from app.models.purchase import Purchase
+from app.models.intelligence_alert import IntelligenceAlert
+from app.models.intelligence_daily_summary import IntelligenceDailySummary
+from app.models.recommendation_feedback import RecommendationFeedback
+from app.services.daily_intelligence_service import generate_daily_intelligence_summary
 from app.services.inventory_intelligence_service import _saleable_subquery
 from app.services.event_demand_service import analyze_event_demand
 
@@ -391,3 +395,131 @@ def resolve_supplier_issue(shop_id: int, issue_id: int,
     issue.resolved_at = datetime.now(timezone.utc)
     db.commit()
     return {"issue_id": issue_id, "status": issue.status, "resolved_at": issue.resolved_at}
+
+
+@router.get("/shops/{shop_id}/intelligence-alerts")
+def list_intelligence_alerts(shop_id: int, status: str = "open",
+                             limit: int = Query(100, ge=1, le=500),
+                             membership=Depends(require_shop_staff),
+                             db: Session = Depends(get_db)):
+    if status not in {"open", "acknowledged", "resolved", "all"}:
+        raise HTTPException(422, "status must be open, acknowledged, resolved or all")
+    query = db.query(IntelligenceAlert).filter(IntelligenceAlert.shop_id == shop_id)
+    if status != "all":
+        query = query.filter(IntelligenceAlert.status == status)
+    rows = query.order_by(
+        IntelligenceAlert.last_seen_at.desc(),
+        IntelligenceAlert.severity.desc(),
+    ).limit(limit).all()
+    return [{
+        "alert_id": row.id, "product_id": row.product_id,
+        "alert_type": row.alert_type, "severity": row.severity,
+        "title": row.title, "message": row.message, "status": row.status,
+        "first_seen_at": row.first_seen_at, "last_seen_at": row.last_seen_at,
+        "acknowledged_at": row.acknowledged_at,
+    } for row in rows]
+
+
+@router.patch("/shops/{shop_id}/intelligence-alerts/{alert_id}/acknowledge")
+def acknowledge_intelligence_alert(shop_id: int, alert_id: int,
+                                   membership=Depends(require_shop_staff),
+                                   db: Session = Depends(get_db)):
+    from datetime import datetime, timezone
+    alert = db.query(IntelligenceAlert).filter(
+        IntelligenceAlert.id == alert_id, IntelligenceAlert.shop_id == shop_id
+    ).with_for_update().first()
+    if alert is None:
+        raise HTTPException(404, "Intelligence alert not found")
+    if alert.status == "open":
+        alert.status = "acknowledged"
+        alert.acknowledged_at = datetime.now(timezone.utc)
+        db.commit()
+    return {"alert_id": alert.id, "status": alert.status,
+            "acknowledged_at": alert.acknowledged_at}
+
+
+@router.get("/shops/{shop_id}/intelligence-daily-summaries")
+def list_intelligence_daily_summaries(shop_id: int, limit: int = Query(30, ge=1, le=90),
+                                       membership=Depends(require_shop_staff),
+                                       db: Session = Depends(get_db)):
+    rows = db.query(IntelligenceDailySummary).filter(
+        IntelligenceDailySummary.shop_id == shop_id
+    ).order_by(IntelligenceDailySummary.summary_date.desc()).limit(limit).all()
+    return [{"summary_date": row.summary_date, "payload": row.payload,
+             "created_at": row.created_at} for row in rows]
+
+
+@router.post("/shops/{shop_id}/intelligence-daily-summaries/generate")
+def generate_shop_daily_summary(shop_id: int,
+                                 membership=Depends(require_shop_owner),
+                                 db: Session = Depends(get_db)):
+    try:
+        return generate_daily_intelligence_summary(db, shop_id)
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+
+
+@router.post("/shops/{shop_id}/recommendation-feedback", status_code=201)
+def create_recommendation_feedback(shop_id: int, payload: dict = Body(...),
+                                   membership=Depends(require_shop_staff),
+                                   current_user: User = Depends(get_current_user),
+                                   db: Session = Depends(get_db)):
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"accepted", "dismissed", "adjusted"}:
+        raise HTTPException(422, "decision must be accepted, dismissed or adjusted")
+    recommendation_type = str(payload.get("recommendation_type") or "reorder").strip().lower()
+    recommendation_key = str(payload.get("recommendation_key") or "").strip()
+    if not recommendation_key or len(recommendation_key) > 180:
+        raise HTTPException(422, "recommendation_key must contain 1-180 characters")
+    product_id = payload.get("product_id")
+    if product_id is not None:
+        product = db.query(Product).filter(
+            Product.id == product_id, Product.shop_id == shop_id,
+        ).first()
+        if product is None:
+            raise HTTPException(404, "Product not found in this shop")
+    recommended_quantity = payload.get("recommended_quantity")
+    actual_quantity = payload.get("actual_quantity")
+    for field, value in (("recommended_quantity", recommended_quantity), ("actual_quantity", actual_quantity)):
+        if value is not None:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                raise HTTPException(422, f"{field} must be numeric")
+            if not isfinite(numeric) or numeric < 0:
+                raise HTTPException(422, f"{field} must be non-negative")
+    if decision == "adjusted" and actual_quantity is None:
+        raise HTTPException(422, "actual_quantity is required for adjusted feedback")
+    feedback = RecommendationFeedback(
+        shop_id=shop_id, product_id=product_id,
+        recommendation_type=recommendation_type,
+        recommendation_key=recommendation_key,
+        decision=decision,
+        recommended_quantity=recommended_quantity,
+        actual_quantity=actual_quantity,
+        notes=(str(payload.get("notes") or "").strip()[:2000] or None),
+        created_by_user_id=current_user.id,
+    )
+    db.add(feedback)
+    db.commit()
+    db.refresh(feedback)
+    return {"feedback_id": feedback.id, "decision": feedback.decision,
+            "recommendation_key": feedback.recommendation_key}
+
+
+@router.get("/shops/{shop_id}/recommendation-feedback")
+def list_recommendation_feedback(shop_id: int, limit: int = Query(100, ge=1, le=500),
+                                  membership=Depends(require_shop_staff),
+                                  db: Session = Depends(get_db)):
+    rows = db.query(RecommendationFeedback).filter(
+        RecommendationFeedback.shop_id == shop_id
+    ).order_by(RecommendationFeedback.created_at.desc()).limit(limit).all()
+    return [{
+        "feedback_id": row.id, "product_id": row.product_id,
+        "recommendation_type": row.recommendation_type,
+        "recommendation_key": row.recommendation_key,
+        "decision": row.decision,
+        "recommended_quantity": row.recommended_quantity,
+        "actual_quantity": row.actual_quantity,
+        "notes": row.notes, "created_at": row.created_at,
+    } for row in rows]
