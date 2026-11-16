@@ -483,3 +483,33 @@ def receive_approved_purchase_order(
         "received_lines": len(order_items),
         "message": "Goods receipt recorded. New batches remain unverified until the shop's batch-verification workflow approves them.",
     }
+
+
+@router.put("/shops/{shop_id}/purchases/{purchase_id}/expected-delivery")
+def set_expected_delivery_date(
+    shop_id: int,
+    purchase_id: int,
+    payload: dict,
+    membership=Depends(require_shop_owner),
+    db: Session = Depends(get_db),
+):
+    """Owner records the supplier-promised date used for on-time delivery metrics."""
+    raw_date = payload.get("expected_delivery_date")
+    try:
+        expected = date.fromisoformat(str(raw_date))
+    except (TypeError, ValueError):
+        raise HTTPException(422, "expected_delivery_date must use YYYY-MM-DD")
+    purchase = db.query(Purchase).filter(
+        Purchase.id == purchase_id, Purchase.shop_id == shop_id,
+    ).with_for_update().first()
+    if purchase is None:
+        raise HTTPException(404, "Purchase order not found")
+    if purchase.status not in {"ordered", "confirmed"}:
+        raise HTTPException(409, "Expected delivery date can only be set before goods are received")
+    purchase.expected_delivery_date = expected
+    db.commit()
+    return {
+        "purchase_id": purchase.id,
+        "expected_delivery_date": purchase.expected_delivery_date,
+        "message": "Supplier-promised delivery date recorded.",
+    }
