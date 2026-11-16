@@ -3408,19 +3408,6 @@ if (showMessage) {
     return value.toString();
   }
 
-  String _intelligenceSummary(Map<String, dynamic> data) {
-    final status = data['status'];
-    if (status != null) return _intelligenceLabel(status.toString());
-    for (final key in ['batches', 'items', 'products', 'recommendations', 'risks']) {
-      final rows = data[key];
-      if (rows is List) return rows.isEmpty ? 'No ${_intelligenceLabel(key).toLowerCase()} found' : '${rows.length} ${_intelligenceLabel(key).toLowerCase()} to review';
-    }
-    final count = data['count'];
-    if (count is num) return '$count results';
-    if (data['message'] != null) return data['message'].toString();
-    return 'Shop data and evidence';
-  }
-
   String _intelligenceDescription(String key) {
     switch (key.toLowerCase()) {
       case 'expiry': return 'Products that are expired or approaching their expiry date.';
