@@ -31,6 +31,12 @@ router = APIRouter(tags=["Shop Operations and Supplier Workspace"])
 class SupplierConnectionInput(BaseModel):
     supplier_id: int = Field(gt=0)
 
+class SupplierOrderUpdate(BaseModel):
+    status: str = Field(pattern="^(preparing|dispatched|delayed)$")
+    note: str | None = Field(default=None, max_length=500)
+    expected_delivery_date: date | None = None
+
+
 class SupplierProfileUpdate(BaseModel):
     name: str = Field(min_length=2, max_length=150)
     contact_person: str | None = Field(default=None, max_length=150)
@@ -249,6 +255,9 @@ def supplier_orders(
         "total_amount": purchase.total_amount,
         "created_at": purchase.created_at,
         "expected_delivery_date": purchase.expected_delivery_date,
+        "supplier_status": purchase.supplier_status,
+        "supplier_status_note": purchase.supplier_status_note,
+        "supplier_updated_at": purchase.supplier_updated_at,
         "items": [{
             "product_id": item.product_id,
             "product_name": item.product.name if item.product else None,
@@ -260,6 +269,40 @@ def supplier_orders(
             "subtotal": item.subtotal,
         } for item in purchase.items],
     } for purchase, shop in rows]
+
+
+
+@router.patch("/supplier/orders/{purchase_id}/status")
+def update_supplier_order_status(
+    purchase_id: int,
+    payload: SupplierOrderUpdate,
+    current_supplier: Supplier = Depends(get_current_distributor),
+    db: Session = Depends(get_db),
+):
+    """Supplier reports fulfilment progress for its own order, never receipt or stock."""
+    purchase = db.query(Purchase).filter(
+        Purchase.id == purchase_id,
+        Purchase.supplier_id == current_supplier.id,
+    ).with_for_update().first()
+    if purchase is None:
+        raise HTTPException(404, "Purchase order not found")
+    if purchase.status in {"received", "cancelled"}:
+        raise HTTPException(409, "This order can no longer be updated by the supplier")
+    if purchase.status not in {"ordered", "confirmed"}:
+        raise HTTPException(409, "Only ordered or confirmed orders can be updated")
+    purchase.supplier_status = payload.status
+    purchase.supplier_status_note = payload.note.strip() if payload.note else None
+    if payload.expected_delivery_date is not None:
+        purchase.expected_delivery_date = payload.expected_delivery_date
+    purchase.supplier_updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {
+        "purchase_id": purchase.id,
+        "supplier_status": purchase.supplier_status,
+        "supplier_status_note": purchase.supplier_status_note,
+        "expected_delivery_date": purchase.expected_delivery_date,
+        "supplier_updated_at": purchase.supplier_updated_at,
+    }
 
 
 @router.post("/supplier/orders/{purchase_id}/confirm")
@@ -429,6 +472,9 @@ def list_shop_purchase_orders(
         "status": purchase.status,
         "total_amount": purchase.total_amount,
         "expected_delivery_date": purchase.expected_delivery_date,
+        "supplier_status": purchase.supplier_status,
+        "supplier_status_note": purchase.supplier_status_note,
+        "supplier_updated_at": purchase.supplier_updated_at,
         "supplier_invoice_number": purchase.supplier_invoice_number,
         "invoice_amount": purchase.invoice_amount,
         "received_at": purchase.received_at,
