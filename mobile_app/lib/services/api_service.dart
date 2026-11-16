@@ -547,11 +547,17 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> receivePurchaseOrder(
-    int purchaseId, List<Map<String, dynamic>> items) async {
+    int purchaseId, List<Map<String, dynamic>> items, {
+    String? invoiceNumber, double? invoiceAmount,
+  }) async {
     final shopId = await _requireActiveShopId();
     return _requestJson('POST',
       '/shops/$shopId/purchases/$purchaseId/receive',
-      body: {'items': items});
+      body: {
+        'items': items,
+        'invoice_number': invoiceNumber,
+        'invoice_amount': invoiceAmount,
+      });
   }
 
   static Future<Map<String, dynamic>> adjustStock({
