@@ -492,6 +492,9 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   bool _salesLoading = false;
   bool _saleSubmitting = false;
   bool _aiLoading = false;
+  bool _intelligenceLoading = false;
+  String? _intelligenceError;
+  Map<String, dynamic> _intelligenceSnapshot = {};
   final List<Map<String, String>> _aiMessages = [
     {'role': 'assistant', 'text': 'Ask about low stock, expiry, dead stock, sales trends, forecasts or reorder recommendations.'},
   ];
@@ -1006,6 +1009,7 @@ if (showMessage) {
       buildSales(),
       buildPurchasing(),
       buildAiAssistant(),
+      buildIntelligence(),
       buildSettings(),
     ];
 
@@ -1040,7 +1044,9 @@ if (showMessage) {
           } else if (index == 3) {
             loadBackendData();
             loadRestockRecommendations();
-          } else if (index == 5 && widget.userRole == 'owner') {
+          } else if (index == 5) {
+            _loadPhase2Intelligence();
+          } else if (index == 6 && widget.userRole == 'owner') {
             _loadEmployees();
           }
 
@@ -1052,6 +1058,7 @@ if (showMessage) {
           NavigationDestination(icon: Icon(Icons.point_of_sale_outlined), selectedIcon: Icon(Icons.point_of_sale), label: 'Sales'),
           NavigationDestination(icon: Icon(Icons.shopping_cart_outlined), selectedIcon: Icon(Icons.shopping_cart), label: 'Purchasing'),
           NavigationDestination(icon: Icon(Icons.auto_awesome_outlined), selectedIcon: Icon(Icons.auto_awesome), label: 'AI Assistant'),
+          NavigationDestination(icon: Icon(Icons.insights_outlined), selectedIcon: Icon(Icons.insights), label: 'Intelligence'),
           NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
         ],
       ),
@@ -2822,6 +2829,113 @@ if (showMessage) {
     } finally {
       if (mounted) setState(() => _saleSubmitting = false);
     }
+  }
+
+
+  Future<void> _loadPhase2Intelligence({bool showMessage = false}) async {
+    if (_intelligenceLoading) return;
+    setState(() {
+      _intelligenceLoading = true;
+      _intelligenceError = null;
+    });
+    try {
+      final result = await ApiService.getPhase2IntelligenceSnapshot();
+      if (!mounted) return;
+      setState(() {
+        _intelligenceSnapshot = result;
+        _intelligenceLoading = false;
+      });
+      if (showMessage) showSnackBar('Intelligence refreshed.');
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _intelligenceError = error.toString();
+        _intelligenceLoading = false;
+      });
+      if (showMessage) showSnackBar('Intelligence refresh failed: $error', isError: true);
+    }
+  }
+
+  Widget _intelligenceMetric(String title, String value, IconData icon) {
+    return Card(child: ListTile(
+      leading: Icon(icon, color: const Color(0xFF16845B)),
+      title: Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+      subtitle: Text(title),
+    ));
+  }
+
+  Widget _intelligenceResultCard(String key, dynamic value) {
+    final body = const JsonEncoder.withIndent('  ').convert(value);
+    return Card(child: ExpansionTile(
+      title: Text(key.replaceAll('_', ' ').toUpperCase(),
+        style: const TextStyle(fontWeight: FontWeight.w600)),
+      subtitle: Text(value is Map && value['status'] != null
+          ? value['status'].toString()
+          : 'Evidence and limitations'),
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(14),
+          child: Align(alignment: Alignment.centerLeft, child: SelectableText(body)),
+        ),
+      ],
+    ));
+  }
+
+  Widget buildIntelligence() {
+    final results = _intelligenceSnapshot['results'];
+    final specialistResults = results is Map<String, dynamic>
+        ? results
+        : <String, dynamic>{};
+    final evidence = _intelligenceSnapshot['evidence_summary'];
+    final safety = _intelligenceSnapshot['safety'];
+
+    return RefreshIndicator(
+      onRefresh: () => _loadPhase2Intelligence(),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text('Shop Intelligence',
+            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          const Text('Read-only insights from recorded shop data. Recommendations never place orders.'),
+          const SizedBox(height: 14),
+          FilledButton.icon(
+            onPressed: _intelligenceLoading ? null : () => _loadPhase2Intelligence(showMessage: true),
+            icon: const Icon(Icons.insights),
+            label: Text(_intelligenceLoading ? 'Refreshing intelligence…' : 'Refresh intelligence'),
+          ),
+          if (_intelligenceLoading) const LinearProgressIndicator(),
+          if (_intelligenceError != null)
+            Card(color: Theme.of(context).colorScheme.errorContainer,
+              child: Padding(padding: const EdgeInsets.all(14),
+                child: Text('Could not load intelligence: $_intelligenceError'))),
+          if (evidence is Map) ...[
+            const SizedBox(height: 12),
+            _intelligenceMetric('Specialist results', '${evidence['specialist_result_count'] ?? 0}', Icons.hub_outlined),
+            if (evidence['partial'] == true)
+              const Text('Some specialists need more event parameters or recorded evidence.',
+                style: TextStyle(color: Colors.orange)),
+          ],
+          if (specialistResults.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ...specialistResults.entries.map((entry) => _intelligenceResultCard(entry.key, entry.value)),
+          ] else if (!_intelligenceLoading && _intelligenceError == null)
+            const Card(child: Padding(padding: EdgeInsets.all(16),
+              child: Text('Tap Refresh intelligence to load expiry, dead stock, stockout, seasonal, supplier and financial insights.'))),
+          if (safety is Map) ...[
+            const SizedBox(height: 8),
+            Card(child: ListTile(
+              leading: const Icon(Icons.verified_user_outlined),
+              title: const Text('Safety'),
+              subtitle: Text('Read-only: ${safety['read_only'] == true ? 'yes' : 'no'} · Purchase orders created: ${safety['purchase_orders_created'] == true ? 'yes' : 'no'}'),
+            )),
+          ],
+          const SizedBox(height: 8),
+          const Text('Data gaps are reported explicitly. Festival comparisons need an event date; supplier reliability metrics need promised delivery and receipt quantities.',
+            style: TextStyle(fontSize: 12, color: Colors.black54)),
+        ],
+      ),
+    );
   }
 
   Future<void> _askInventoryAi() async {
