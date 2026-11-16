@@ -393,6 +393,8 @@ def list_shop_purchase_orders(
         "status": purchase.status,
         "total_amount": purchase.total_amount,
         "expected_delivery_date": purchase.expected_delivery_date,
+        "supplier_invoice_number": purchase.supplier_invoice_number,
+        "invoice_amount": purchase.invoice_amount,
         "received_at": purchase.received_at,
         "items": [{
             "purchase_item_id": item.id,
