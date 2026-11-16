@@ -1,5 +1,6 @@
 """Shop-scoped data capture for financial, supplier and local-demand intelligence."""
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from math import isfinite
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -126,6 +127,11 @@ def update_intelligence_settings(shop_id: int, payload: dict = Body(...),
             value = str(payload[field]).strip()
             if not value or len(value) > max_length:
                 raise HTTPException(422, f"{field} must contain 1-{max_length} characters")
+            if field == "timezone":
+                try:
+                    ZoneInfo(value)
+                except ZoneInfoNotFoundError:
+                    raise HTTPException(422, "timezone must be a valid IANA timezone, such as Asia/Kolkata")
             setattr(shop, field, value)
     db.commit()
     return {"shop_id": shop_id, "city": shop.city, "state": shop.state,
@@ -195,7 +201,16 @@ def capture_daily_availability(shop_id: int, snapshot_date: date | None = None,
                                 membership=Depends(require_shop_staff),
                                 current_user: User = Depends(get_current_user),
                                 db: Session = Depends(get_db)):
-    day = snapshot_date or date.today()
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+    if shop is None:
+        raise HTTPException(404, "Shop not found")
+    try:
+        local_today = datetime.now(ZoneInfo(shop.timezone or "Asia/Kolkata")).date()
+    except ZoneInfoNotFoundError:
+        raise HTTPException(409, "Shop timezone is invalid; owner must correct intelligence settings")
+    day = snapshot_date or local_today
+    if day != local_today:
+        raise HTTPException(422, "Availability capture records the current shop-local date only")
     products = db.query(Product).filter(
         Product.shop_id == shop_id, Product.is_active.is_(True)
     ).all()
