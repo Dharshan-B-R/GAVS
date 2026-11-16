@@ -643,6 +643,9 @@ class ApiService {
   static Future<Map<String, dynamic>> getSupplierProfile() async =>
       _requestJson('GET', '/supplier/profile');
 
+  static Future<Map<String, dynamic>> updateSupplierProfile(Map<String, dynamic> data) async =>
+      _requestJson('PUT', '/supplier/profile', body: data);
+
   static Future<Map<String, dynamic>> confirmSupplierOrder(int purchaseId) async =>
       _requestJson('POST', '/supplier/orders/$purchaseId/confirm');
 
