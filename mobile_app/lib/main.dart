@@ -499,6 +499,7 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   Map<String, dynamic> _availabilityCoverage = {};
   bool _availabilityCapturing = false;
   List<dynamic> _shopCustomers = [];
+  List<dynamic> _supplierIssues = [];
   final List<Map<String, String>> _aiMessages = [
     {'role': 'assistant', 'text': 'Ask about low stock, expiry, dead stock, sales trends, forecasts or reorder recommendations.'},
   ];
@@ -2854,12 +2855,16 @@ if (showMessage) {
         ApiService.getFestivalCalendar(),
         ApiService.getAvailabilitySnapshotCoverage(),
         ApiService.getShopCustomers(),
+        ApiService.getSupplierIssues(status: 'open'),
+        ApiService.getShopSuppliers(),
       ]);
       if (!mounted) return;
       setState(() {
         _festivalEvents = values[0] as List<dynamic>;
         _availabilityCoverage = values[1] as Map<String, dynamic>;
         _shopCustomers = values[2] as List<dynamic>;
+        _supplierIssues = values[3] as List<dynamic>;
+        _shopSuppliers = values[4] as List<dynamic>;
       });
     } catch (_) {
       // The primary intelligence response remains usable if optional context
@@ -2882,6 +2887,86 @@ if (showMessage) {
   }
 
 
+
+
+  Future<void> _reportSupplierIssue() async {
+    if (_shopSuppliers.isEmpty) {
+      try {
+        _shopSuppliers = await ApiService.getShopSuppliers();
+      } catch (_) {}
+    }
+    if (_shopSuppliers.isEmpty) {
+      if (mounted) showSnackBar('Connect a supplier before recording an issue.', isError: true);
+      return;
+    }
+    int selectedSupplier = (_shopSuppliers.first['supplier_id'] as num).toInt();
+    String severity = 'medium';
+    final type = TextEditingController();
+    final description = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(builder: (context, updateDialog) =>
+        AlertDialog(
+          title: const Text('Report supplier issue'),
+          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            DropdownButtonFormField<int>(
+              value: selectedSupplier,
+              decoration: const InputDecoration(labelText: 'Supplier'),
+              items: _shopSuppliers.map((raw) {
+                final supplier = raw as Map<String, dynamic>;
+                return DropdownMenuItem<int>(
+                  value: (supplier['supplier_id'] as num).toInt(),
+                  child: Text(supplier['name'].toString()),
+                );
+              }).toList(),
+              onChanged: (value) { if (value != null) updateDialog(() => selectedSupplier = value); },
+            ),
+            TextField(controller: type, decoration: const InputDecoration(labelText: 'Issue type (short label)')),
+            TextField(controller: description, maxLines: 3,
+              decoration: const InputDecoration(labelText: 'Describe the issue')),
+            DropdownButtonFormField<String>(
+              value: severity,
+              decoration: const InputDecoration(labelText: 'Severity'),
+              items: const [
+                DropdownMenuItem(value: 'low', child: Text('Low')),
+                DropdownMenuItem(value: 'medium', child: Text('Medium')),
+                DropdownMenuItem(value: 'high', child: Text('High')),
+                DropdownMenuItem(value: 'critical', child: Text('Critical')),
+              ],
+              onChanged: (value) { if (value != null) updateDialog(() => severity = value); },
+            ),
+          ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save issue')),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true && type.text.trim().isNotEmpty && description.text.trim().isNotEmpty) {
+      try {
+        await ApiService.createSupplierIssue(
+          supplierId: selectedSupplier, issueType: type.text.trim(),
+          description: description.text.trim(), severity: severity);
+        await _loadIntelligenceContext();
+        if (mounted) showSnackBar('Supplier issue recorded.');
+      } catch (error) {
+        if (mounted) showSnackBar('Could not record supplier issue: $error', isError: true);
+      }
+    }
+    type.dispose();
+    description.dispose();
+  }
+
+  Future<void> _resolveSupplierIssue(int issueId) async {
+    try {
+      await ApiService.resolveSupplierIssue(issueId);
+      await _loadIntelligenceContext();
+      if (mounted) showSnackBar('Supplier issue marked resolved.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not resolve supplier issue: $error', isError: true);
+    }
+  }
 
   Future<void> _createKhataCustomer() async {
     final name = TextEditingController();
@@ -3219,6 +3304,39 @@ if (showMessage) {
           ],
 
 
+
+          const SizedBox(height: 16),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Supplier issues',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              const Text('Record delivery, quality, short-supply or invoice issues. Linked purchase issues contribute to supplier issue-rate evidence.'),
+              Align(alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _reportSupplierIssue,
+                  icon: const Icon(Icons.report_problem_outlined),
+                  label: const Text('Report issue'),
+                )),
+              if (_supplierIssues.isEmpty)
+                const Text('No open supplier issues.'),
+              ..._supplierIssues.take(6).map((raw) {
+                final issue = raw as Map<String, dynamic>;
+                final id = (issue['issue_id'] as num).toInt();
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(issue['issue_type']?.toString() ?? 'Supplier issue'),
+                  subtitle: Text('${issue['severity']} · ${issue['description']}'),
+                  trailing: IconButton(
+                    tooltip: 'Resolve issue',
+                    icon: const Icon(Icons.check_circle_outline),
+                    onPressed: () => _resolveSupplierIssue(id),
+                  ),
+                );
+              }),
+            ],
+          ))),
           const SizedBox(height: 16),
           Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
