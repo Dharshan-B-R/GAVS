@@ -612,6 +612,11 @@ class ApiService {
     return _requestList('/shops/$shopId/employees');
   }
 
+  static Future<Map<String, dynamic>> revokeEmployeeInvitation(int invitationId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('DELETE', '/auth/shops/$shopId/employees/invitations/$invitationId');
+  }
+
   static Future<Map<String, dynamic>> inviteEmployee(String email) async {
     final shopId = await _requireActiveShopId();
     return _requestJson('POST', '/auth/shops/$shopId/employees/invitations',
@@ -637,6 +642,9 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getSupplierProfile() async =>
       _requestJson('GET', '/supplier/profile');
+
+  static Future<Map<String, dynamic>> updateSupplierProfile(Map<String, dynamic> data) async =>
+      _requestJson('PUT', '/supplier/profile', body: data);
 
   static Future<Map<String, dynamic>> confirmSupplierOrder(int purchaseId) async =>
       _requestJson('POST', '/supplier/orders/$purchaseId/confirm');

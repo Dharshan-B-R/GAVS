@@ -681,6 +681,28 @@ def list_employee_invitations(
     } for row in rows]
 
 
+@router.delete("/shops/{shop_id}/employees/invitations/{invitation_id}")
+def revoke_employee_invitation(
+    shop_id: int,
+    invitation_id: int,
+    membership=Depends(require_shop_owner),
+    db: Session = Depends(get_db),
+):
+    invitation = db.query(ShopInvitation).filter(
+        ShopInvitation.id == invitation_id,
+        ShopInvitation.shop_id == shop_id,
+        ShopInvitation.invitation_type == "employee",
+    ).with_for_update().first()
+    if invitation is None:
+        raise HTTPException(404, "Employee invitation not found")
+    if invitation.status != "pending":
+        raise HTTPException(409, "Only pending invitations can be revoked")
+    invitation.status = "revoked"
+    invitation.responded_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"invitation_id": invitation.id, "status": invitation.status}
+
+
 @router.post("/employees/accept-invitation", status_code=201)
 def accept_employee_invitation(
     payload: EmployeeInviteAccept,

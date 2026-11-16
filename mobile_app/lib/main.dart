@@ -483,6 +483,7 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   final TextEditingController _employeeEmailController = TextEditingController();
   final TextEditingController _legacyCustomerIdController = TextEditingController();
   List<dynamic> _employees = [];
+  List<dynamic> _employeeInvitations = [];
   bool _employeesLoading = false;
   final TextEditingController _saleQuantityController = TextEditingController(text: '1');
   final TextEditingController _aiQuestionController = TextEditingController();
@@ -2145,8 +2146,15 @@ if (showMessage) {
     if (widget.userRole != 'owner') return;
     setState(() => _employeesLoading = true);
     try {
-      final rows = await ApiService.getEmployees();
-      if (mounted) setState(() { _employees = rows; _employeesLoading = false; });
+      final values = await Future.wait([
+        ApiService.getEmployees(),
+        ApiService.getEmployeeInvitations(),
+      ]);
+      if (mounted) setState(() {
+        _employees = values[0] as List<dynamic>;
+        _employeeInvitations = values[1] as List<dynamic>;
+        _employeesLoading = false;
+      });
     } catch (error) {
       if (mounted) {
         setState(() => _employeesLoading = false);
@@ -2178,6 +2186,16 @@ if (showMessage) {
       await _loadEmployees();
     } catch (error) {
       if (mounted) showSnackBar('Invitation failed: $error', isError: true);
+    }
+  }
+
+  Future<void> _revokeEmployeeInvitation(int invitationId) async {
+    try {
+      await ApiService.revokeEmployeeInvitation(invitationId);
+      await _loadEmployees();
+      if (mounted) showSnackBar('Employee invitation cancelled.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not cancel invitation: $error', isError: true);
     }
   }
 
@@ -4297,6 +4315,24 @@ if (showMessage) {
               }),
               if (!_employeesLoading && _employees.isEmpty)
                 const Text('No employees added yet.'),
+              if (_employeeInvitations.any((raw) => (raw as Map<String, dynamic>)['status'] == 'pending')) ...[
+                const Divider(),
+                const Text('Pending invitations', style: TextStyle(fontWeight: FontWeight.w600)),
+                ..._employeeInvitations.where((raw) => (raw as Map<String, dynamic>)['status'] == 'pending').map((raw) {
+                  final invitation = raw as Map<String, dynamic>;
+                  final invitationId = (invitation['invitation_id'] as num).toInt();
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(invitation['email']?.toString() ?? 'Employee invitation'),
+                    subtitle: Text('Expires: ${invitation['expires_at'] ?? 'in 7 days'}'),
+                    trailing: IconButton(
+                      tooltip: 'Cancel invitation',
+                      icon: const Icon(Icons.cancel_outlined),
+                      onPressed: () => _revokeEmployeeInvitation(invitationId),
+                    ),
+                  );
+                }),
+              ],
             ],
           ))),
         ],
@@ -4977,6 +5013,57 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
     }
   }
 
+  Future<void> _editProfile() async {
+    final current = _profile ?? {};
+    final name = TextEditingController(text: current['name']?.toString() ?? '');
+    final contact = TextEditingController(text: current['contact_person']?.toString() ?? '');
+    final phone = TextEditingController(text: current['phone']?.toString() ?? '');
+    final address = TextEditingController(text: current['address']?.toString() ?? '');
+    final gstin = TextEditingController(text: current['gstin']?.toString() ?? '');
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit supplier profile'),
+        content: SingleChildScrollView(child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: name, decoration: const InputDecoration(labelText: 'Business name')),
+            TextField(controller: contact, decoration: const InputDecoration(labelText: 'Contact person')),
+            TextField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone')),
+            TextField(controller: address, maxLines: 2, decoration: const InputDecoration(labelText: 'Business address')),
+            TextField(controller: gstin, textCapitalization: TextCapitalization.characters, decoration: const InputDecoration(labelText: 'GSTIN (optional)')),
+          ],
+        )),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          FilledButton(onPressed: () {
+            if (name.text.trim().length < 2) return;
+            final value = <String, dynamic>{
+              'name': name.text.trim(),
+              'contact_person': contact.text.trim().isEmpty ? null : contact.text.trim(),
+              'phone': phone.text.trim().isEmpty ? null : phone.text.trim(),
+              'address': address.text.trim().isEmpty ? null : address.text.trim(),
+              'gstin': gstin.text.trim().isEmpty ? null : gstin.text.trim().toUpperCase(),
+              'notes': current['notes'],
+            };
+            Navigator.pop(dialogContext, value);
+          }, child: const Text('Save')),
+        ],
+      ),
+    );
+    name.dispose(); contact.dispose(); phone.dispose(); address.dispose(); gstin.dispose();
+    if (result == null) return;
+    try {
+      await ApiService.updateSupplierProfile(result);
+      await _load();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Supplier profile updated.')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update supplier profile: $error')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final name = _profile?['name']?.toString() ?? widget.identity;
@@ -4999,6 +5086,14 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
               Text(name, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               Text(widget.identity),
               if (_profile?['phone'] != null) Text(_profile!['phone'].toString()),
+              if (_profile?['address'] != null) Text(_profile!['address'].toString()),
+              if (_profile?['gstin'] != null) Text('GSTIN: ${_profile!['gstin']}'),
+              const SizedBox(height: 8),
+              Align(alignment: Alignment.centerRight, child: OutlinedButton.icon(
+                onPressed: _editProfile,
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Edit profile'),
+              )),
             ],
           ))),
           const SizedBox(height: 20),

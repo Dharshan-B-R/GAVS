@@ -97,13 +97,13 @@ def supplier_performance(shop_id: int, limit: int = Query(100, ge=1, le=500),
 
 
 @router.get("/shops/{shop_id}/agents/financial-position")
-def financial_position(shop_id: int, membership=Depends(require_shop_staff),
+def financial_position(shop_id: int, membership=Depends(require_shop_owner),
                        db: Session = Depends(get_db)):
     return analyze_financial_position(db, shop_id)
 
 
 @router.get("/shops/{shop_id}/agents/suppliers")
-def supplier_comparison(shop_id: int, membership=Depends(require_shop_staff),
+def supplier_comparison(shop_id: int, membership=Depends(require_shop_owner),
                         db: Session = Depends(get_db)):
     return compare_suppliers(db, shop_id)
 
