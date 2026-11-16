@@ -14,6 +14,7 @@ class Purchase(Base):
     status = Column(String(20), nullable=False, default="received", server_default="received")
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
     invoice_number = Column(String(100), nullable=True, index=True)
+    supplier_invoice_number = Column(String(100), nullable=True, index=True)
     purchase_date = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     expected_delivery_date = Column(Date, nullable=True, index=True)
     received_at = Column(DateTime(timezone=True), nullable=True, index=True)
