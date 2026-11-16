@@ -1,9 +1,7 @@
-"""Supplier delivery and price performance from received purchase records.
+"""Supplier performance evidence from received purchase history.
 
-Only confirmed received purchase lines are counted. The existing schema does not
-record promised delivery dates, ordered quantities versus short receipt quantities,
-or dispute outcomes, so those metrics are reported as unavailable rather than
-fabricated.
+The present schema has no promised delivery timestamp, separate ordered and received
+quantities, or supplier issue log. Unavailable rates are intentionally left null.
 """
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -17,69 +15,49 @@ from app.models.supplier import Supplier
 def analyze_supplier_performance(db: Session, shop_id: int, limit: int = 100) -> dict:
     if not 1 <= limit <= 500:
         raise ValueError("limit must be between 1 and 500")
-
     rows = (
         db.query(
-            Supplier.id.label("supplier_id"),
-            Supplier.name.label("supplier_name"),
-            func.count(func.distinct(Purchase.id)).label("received_orders"),
-            func.count(PurchaseItem.id).label("received_lines"),
-            func.coalesce(func.sum(PurchaseItem.quantity), 0).label("received_quantity"),
-            func.coalesce(func.sum(PurchaseItem.subtotal), 0).label("received_value"),
-            func.min(Purchase.purchase_date).label("first_received_at"),
-            func.max(Purchase.purchase_date).label("last_received_at"),
-            func.avg(PurchaseItem.unit_price).label("average_recorded_unit_price"),
+            Supplier.id, Supplier.name,
+            func.count(func.distinct(Purchase.id)),
+            func.count(PurchaseItem.id),
+            func.coalesce(func.sum(PurchaseItem.quantity), 0),
+            func.coalesce(func.sum(PurchaseItem.subtotal), 0),
+            func.min(Purchase.purchase_date),
+            func.max(Purchase.purchase_date),
         )
         .join(Purchase, Purchase.supplier_id == Supplier.id)
         .join(PurchaseItem, PurchaseItem.purchase_id == Purchase.id)
         .join(Product, Product.id == PurchaseItem.product_id)
         .filter(
-            Purchase.shop_id == shop_id,
-            Product.shop_id == shop_id,
-            Product.is_active.is_(True),
-            Purchase.status == "received",
+            Purchase.shop_id == shop_id, Product.shop_id == shop_id,
+            Product.is_active.is_(True), Purchase.status == "received",
             PurchaseItem.quantity > 0,
         )
         .group_by(Supplier.id, Supplier.name)
         .order_by(func.sum(PurchaseItem.subtotal).desc(), Supplier.name.asc())
-        .limit(limit)
-        .all()
+        .limit(limit).all()
     )
-
-    suppliers = []
-    for row in rows:
-        suppliers.append({
-            "supplier_id": row.supplier_id,
-            "supplier_name": row.supplier_name,
-            "received_order_count": int(row.received_orders or 0),
-            "received_invoice_line_count": int(row.received_lines or 0),
-            "received_quantity": round(float(row.received_quantity or 0), 3),
-            "recorded_received_value": round(float(row.received_value or 0), 2),
-            "average_recorded_unit_price": (
-                round(float(row.average_recorded_unit_price), 2)
-                if row.average_recorded_unit_price is not None else None
-            ),
-            "first_recorded_receipt": row.first_received_at,
-            "last_recorded_receipt": row.last_received_at,
-            "delivery_reliability": None,
-            "fill_rate": None,
-            "performance_status": "insufficient_delivery_evidence",
-        })
-
+    suppliers = [{
+        "supplier_id": row[0], "supplier_name": row[1],
+        "received_order_count": int(row[2] or 0),
+        "received_invoice_line_count": int(row[3] or 0),
+        "received_quantity": round(float(row[4] or 0), 3),
+        "recorded_received_value": round(float(row[5] or 0), 2),
+        "first_recorded_receipt": row[6], "last_recorded_receipt": row[7],
+        "on_time_delivery_rate": None, "fill_rate": None, "issue_rate": None,
+        "performance_status": "insufficient_delivery_evidence",
+    } for row in rows]
     return {
-        "analysis": "supplier_performance",
-        "shop_id": shop_id,
-        "supplier_count": len(suppliers),
-        "suppliers": suppliers,
+        "analysis": "supplier_performance", "shop_id": shop_id,
+        "supplier_count": len(suppliers), "suppliers": suppliers,
         "unavailable_metrics": {
             "on_time_delivery_rate": "Promised delivery dates are not stored.",
-            "fill_rate": "Ordered quantity and short-receipt quantities are not separately recorded.",
-            "dispute_rate": "Supplier issue/dispute records are not present in the current schema.",
+            "fill_rate": "Ordered and received quantities are not stored separately.",
+            "issue_rate": "Supplier issue/dispute records are not present.",
         },
         "limitations": [
-            "Only received purchase records in the requested shop are included",
-            "Purchase dates are recorded receipt dates only when the receiving workflow completed",
-            "No reliability score is inferred from sparse delivery observations",
-            "Price comparisons do not normalize taxes, freight, discounts, pack size or quality",
+            "Only completed receipts linked to this shop are included",
+            "Receipt dates and received values are historical activity, not reliability scores",
         ],
     }
+}
