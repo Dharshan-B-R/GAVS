@@ -5,11 +5,13 @@ uplifts. It reports sparse history as low confidence and exposes selling-day
 coverage so callers can avoid treating missing observations as zero demand.
 """
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
 
 from app.models.product import Product
+from app.models.shop import Shop
 from app.models.stock_movement import StockMovement
 from app.models.inventory_availability_snapshot import InventoryAvailabilitySnapshot
 
@@ -22,8 +24,15 @@ def forecast_demand(
     if not 1 <= limit <= 100:
         raise ValueError("limit must be between 1 and 100")
 
-    end = datetime.now(timezone.utc)
-    start = end - timedelta(days=days)
+    shop = db.query(Shop).filter(Shop.id == shop_id).first() if shop_id is not None else None
+    try:
+        local_tz = ZoneInfo(shop.timezone if shop and shop.timezone else "UTC")
+    except ZoneInfoNotFoundError:
+        local_tz = ZoneInfo("UTC")
+    local_today = datetime.now(local_tz).date()
+    local_start_date = local_today - timedelta(days=days - 1)
+    start = datetime.combine(local_start_date, time.min, tzinfo=local_tz).astimezone(timezone.utc)
+    end = datetime.combine(local_today + timedelta(days=1), time.min, tzinfo=local_tz).astimezone(timezone.utc)
     query = db.query(
         Product,
         StockMovement.created_at,
@@ -47,10 +56,15 @@ def forecast_demand(
         units = float(quantity or 0)
         item = observations[product.id]
         item["units"] += units
-        item["selling_days"].add(timestamp.date())
-        item["weekday_units"][timestamp.weekday()] += units
-        item["daily_units"][timestamp.date()] += units
-        item["months"].add(timestamp.month)
+        observed_at = timestamp
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=timezone.utc)
+        local_observed_at = observed_at.astimezone(local_tz)
+        observed_day = local_observed_at.date()
+        item["selling_days"].add(observed_day)
+        item["weekday_units"][local_observed_at.weekday()] += units
+        item["daily_units"][observed_day] += units
+        item["months"].add(local_observed_at.month)
 
     products = []
     product_query = db.query(Product).filter(Product.is_active.is_(True))
@@ -63,8 +77,8 @@ def forecast_demand(
         snapshots = db.query(InventoryAvailabilitySnapshot).filter(
             InventoryAvailabilitySnapshot.shop_id == product.shop_id,
             InventoryAvailabilitySnapshot.product_id == product.id,
-            InventoryAvailabilitySnapshot.snapshot_date >= start.date(),
-            InventoryAvailabilitySnapshot.snapshot_date <= end.date(),
+            InventoryAvailabilitySnapshot.snapshot_date >= local_start_date,
+            InventoryAvailabilitySnapshot.snapshot_date <= local_today,
         ).all()
         availability_dates = {row.snapshot_date for row in snapshots}
         available_dates = {row.snapshot_date for row in snapshots if row.is_available}
