@@ -31,6 +31,10 @@ router = APIRouter(tags=["Shop Operations and Supplier Workspace"])
 class SupplierConnectionInput(BaseModel):
     supplier_id: int = Field(gt=0)
 
+class EmployeeJobRoleUpdate(BaseModel):
+    job_role: str = Field(pattern="^(manager|cashier|stock_manager)$")
+
+
 class SupplierOrderUpdate(BaseModel):
     status: str = Field(pattern="^(preparing|dispatched|delayed)$")
     note: str | None = Field(default=None, max_length=500)
@@ -72,9 +76,30 @@ def list_shop_employees(
         "user_id": user.id,
         "full_name": user.full_name,
         "email": user.email,
+        "job_role": membership.job_role,
         "is_active": membership.is_active and user.is_active,
         "joined_at": membership.created_at,
     } for membership, user in rows]
+
+
+@router.patch("/shops/{shop_id}/employees/{user_id}/job-role")
+def set_employee_job_role(
+    shop_id: int,
+    user_id: int,
+    payload: EmployeeJobRoleUpdate,
+    membership=Depends(require_shop_owner),
+    db: Session = Depends(get_db),
+):
+    row = db.query(ShopMembership).filter(
+        ShopMembership.shop_id == shop_id,
+        ShopMembership.user_id == user_id,
+        ShopMembership.role == "Employee",
+    ).with_for_update().first()
+    if row is None:
+        raise HTTPException(404, "Employee membership not found")
+    row.job_role = payload.job_role
+    db.commit()
+    return {"shop_id": shop_id, "user_id": user_id, "job_role": row.job_role}
 
 
 @router.patch("/shops/{shop_id}/employees/{user_id}/status")
