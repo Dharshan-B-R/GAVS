@@ -146,6 +146,7 @@ def forecast_demand(
         "analysis": "demand_forecast",
         "shop_id": shop_id,
         "history_days": days,
+        "shop_timezone": shop.timezone if shop else "UTC",
         "products": products,
         "count": len(products),
         "limitations": [
