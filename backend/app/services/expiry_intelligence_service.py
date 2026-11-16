@@ -3,7 +3,8 @@
 This service is deliberately deterministic: it reports recorded exposure and loss,
 not speculative spoilage or sales that might have occurred.
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.expiry_record import ExpiryRecord
 from app.models.product import Product
 from app.models.product_batch import ProductBatch
+from app.models.shop import Shop
 
 
 def analyze_expiry_risk(
@@ -25,7 +27,14 @@ def analyze_expiry_risk(
     if not 1 <= limit <= 500:
         raise ValueError("limit must be between 1 and 500")
 
-    today = as_of or date.today()
+    if as_of is None:
+        shop = db.query(Shop).filter(Shop.id == shop_id).first()
+        try:
+            today = datetime.now(ZoneInfo(shop.timezone if shop and shop.timezone else "Asia/Kolkata")).date()
+        except ZoneInfoNotFoundError:
+            today = date.today()
+    else:
+        today = as_of
     horizon = today + timedelta(days=horizon_days)
     rows = (
         db.query(ProductBatch, Product)
