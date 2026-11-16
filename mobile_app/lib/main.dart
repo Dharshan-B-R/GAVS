@@ -5013,6 +5013,57 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
     }
   }
 
+  Future<void> _editProfile() async {
+    final current = _profile ?? {};
+    final name = TextEditingController(text: current['name']?.toString() ?? '');
+    final contact = TextEditingController(text: current['contact_person']?.toString() ?? '');
+    final phone = TextEditingController(text: current['phone']?.toString() ?? '');
+    final address = TextEditingController(text: current['address']?.toString() ?? '');
+    final gstin = TextEditingController(text: current['gstin']?.toString() ?? '');
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit supplier profile'),
+        content: SingleChildScrollView(child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: name, decoration: const InputDecoration(labelText: 'Business name')),
+            TextField(controller: contact, decoration: const InputDecoration(labelText: 'Contact person')),
+            TextField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone')),
+            TextField(controller: address, maxLines: 2, decoration: const InputDecoration(labelText: 'Business address')),
+            TextField(controller: gstin, textCapitalization: TextCapitalization.characters, decoration: const InputDecoration(labelText: 'GSTIN (optional)')),
+          ],
+        )),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          FilledButton(onPressed: () {
+            if (name.text.trim().length < 2) return;
+            final value = <String, dynamic>{
+              'name': name.text.trim(),
+              'contact_person': contact.text.trim().isEmpty ? null : contact.text.trim(),
+              'phone': phone.text.trim().isEmpty ? null : phone.text.trim(),
+              'address': address.text.trim().isEmpty ? null : address.text.trim(),
+              'gstin': gstin.text.trim().isEmpty ? null : gstin.text.trim().toUpperCase(),
+              'notes': current['notes'],
+            };
+            Navigator.pop(dialogContext, value);
+          }, child: const Text('Save')),
+        ],
+      ),
+    );
+    name.dispose(); contact.dispose(); phone.dispose(); address.dispose(); gstin.dispose();
+    if (result == null) return;
+    try {
+      await ApiService.updateSupplierProfile(result);
+      await _load();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Supplier profile updated.')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update supplier profile: $error')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final name = _profile?['name']?.toString() ?? widget.identity;
@@ -5035,6 +5086,14 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
               Text(name, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               Text(widget.identity),
               if (_profile?['phone'] != null) Text(_profile!['phone'].toString()),
+              if (_profile?['address'] != null) Text(_profile!['address'].toString()),
+              if (_profile?['gstin'] != null) Text('GSTIN: ${_profile!['gstin']}'),
+              const SizedBox(height: 8),
+              Align(alignment: Alignment.centerRight, child: OutlinedButton.icon(
+                onPressed: _editProfile,
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Edit profile'),
+              )),
             ],
           ))),
           const SizedBox(height: 20),
