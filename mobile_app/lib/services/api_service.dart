@@ -578,6 +578,11 @@ class ApiService {
     return _requestJson('POST', '/shops/$shopId/inventory/adjustments', body: body);
   }
 
+  static Future<Map<String, dynamic>> setEmployeeJobRole(int userId, String jobRole) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PATCH', '/shops/$shopId/employees/$userId/job-role', body: {'job_role': jobRole});
+  }
+
   static Future<Map<String, dynamic>> setEmployeeStatus(int userId, bool active) async {
     final shopId = await _requireActiveShopId();
     return _requestJson('PATCH', '/shops/$shopId/employees/$userId/status',
