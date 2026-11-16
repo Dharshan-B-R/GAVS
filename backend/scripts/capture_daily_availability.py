@@ -29,7 +29,7 @@ def capture_all_shops() -> dict:
                 except ZoneInfoNotFoundError as error:
                     raise ValueError(f"Invalid timezone for shop {shop.id}: {shop.timezone}") from error
 
-                saleable = _saleable_subquery(db, shop.id)
+                saleable = _saleable_subquery(db, shop.id, as_of_date=local_today)
                 products = db.query(Product).filter(
                     Product.shop_id == shop.id,
                     Product.is_active.is_(True),
