@@ -483,6 +483,7 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   final TextEditingController _employeeEmailController = TextEditingController();
   final TextEditingController _legacyCustomerIdController = TextEditingController();
   List<dynamic> _employees = [];
+  List<dynamic> _employeeInvitations = [];
   bool _employeesLoading = false;
   final TextEditingController _saleQuantityController = TextEditingController(text: '1');
   final TextEditingController _aiQuestionController = TextEditingController();
@@ -2145,8 +2146,15 @@ if (showMessage) {
     if (widget.userRole != 'owner') return;
     setState(() => _employeesLoading = true);
     try {
-      final rows = await ApiService.getEmployees();
-      if (mounted) setState(() { _employees = rows; _employeesLoading = false; });
+      final values = await Future.wait([
+        ApiService.getEmployees(),
+        ApiService.getEmployeeInvitations(),
+      ]);
+      if (mounted) setState(() {
+        _employees = values[0] as List<dynamic>;
+        _employeeInvitations = values[1] as List<dynamic>;
+        _employeesLoading = false;
+      });
     } catch (error) {
       if (mounted) {
         setState(() => _employeesLoading = false);
@@ -2178,6 +2186,16 @@ if (showMessage) {
       await _loadEmployees();
     } catch (error) {
       if (mounted) showSnackBar('Invitation failed: $error', isError: true);
+    }
+  }
+
+  Future<void> _revokeEmployeeInvitation(int invitationId) async {
+    try {
+      await ApiService.revokeEmployeeInvitation(invitationId);
+      await _loadEmployees();
+      if (mounted) showSnackBar('Employee invitation cancelled.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not cancel invitation: $error', isError: true);
     }
   }
 
@@ -4297,6 +4315,24 @@ if (showMessage) {
               }),
               if (!_employeesLoading && _employees.isEmpty)
                 const Text('No employees added yet.'),
+              if (_employeeInvitations.any((raw) => (raw as Map<String, dynamic>)['status'] == 'pending')) ...[
+                const Divider(),
+                const Text('Pending invitations', style: TextStyle(fontWeight: FontWeight.w600)),
+                ..._employeeInvitations.where((raw) => (raw as Map<String, dynamic>)['status'] == 'pending').map((raw) {
+                  final invitation = raw as Map<String, dynamic>;
+                  final invitationId = (invitation['invitation_id'] as num).toInt();
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(invitation['email']?.toString() ?? 'Employee invitation'),
+                    subtitle: Text('Expires: ${invitation['expires_at'] ?? 'in 7 days'}'),
+                    trailing: IconButton(
+                      tooltip: 'Cancel invitation',
+                      icon: const Icon(Icons.cancel_outlined),
+                      onPressed: () => _revokeEmployeeInvitation(invitationId),
+                    ),
+                  );
+                }),
+              ],
             ],
           ))),
         ],
