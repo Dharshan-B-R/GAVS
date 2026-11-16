@@ -690,4 +690,72 @@ class ApiService {
     return _requestJson('GET', '/shops/$shopId/agents/financial-position');
   }
 
+  /// Shop-owned khata, festival calendar and availability evidence APIs.
+  static Future<List<dynamic>> getShopCustomers() async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/customers');
+  }
+
+  static Future<Map<String, dynamic>> createShopCustomer(Map<String, dynamic> data) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/customers', body: data);
+  }
+
+  static Future<Map<String, dynamic>> addShopKhataTransaction(
+    int customerId, Map<String, dynamic> data) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/customers/$customerId/khata', body: data);
+  }
+
+  static Future<Map<String, dynamic>> getShopKhataLedger(int customerId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/customers/$customerId/khata');
+  }
+
+  static Future<List<dynamic>> getFestivalCalendar({
+    String? startDate, String? endDate,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    final query = <String, String>{};
+    if (startDate != null) query['start_date'] = startDate;
+    if (endDate != null) query['end_date'] = endDate;
+    return _requestList('/shops/$shopId/festival-calendar', query: query);
+  }
+
+  static Future<Map<String, dynamic>> addFestivalEvent({
+    required String name, required String eventDate,
+    String eventType = 'festival', String? notes,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/festival-calendar',
+      body: {'name': name, 'event_date': eventDate, 'event_type': eventType, 'notes': notes});
+  }
+
+  static Future<Map<String, dynamic>> compareSavedFestivalEvent(int eventId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/event-demand/$eventId');
+  }
+
+  static Future<Map<String, dynamic>> captureDailyAvailability({
+    String? snapshotDate,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/availability-snapshots/capture',
+      query: snapshotDate == null ? null : {'snapshot_date': snapshotDate});
+  }
+
+  static Future<Map<String, dynamic>> getAvailabilitySnapshotCoverage() async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/availability-snapshots');
+  }
+
+  static Future<Map<String, dynamic>> setExpectedSupplierDeliveryDate(
+    int purchaseId, String expectedDate,
+  ) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PUT', '/shops/$shopId/purchases/$purchaseId/expected-delivery',
+      body: {'expected_delivery_date': expectedDate});
+  }
+
+
 }
