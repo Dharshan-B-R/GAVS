@@ -1069,9 +1069,9 @@ if (showMessage) {
 
         foregroundColor: Colors.white,
 
-        icon: const Icon(Icons.mic),
+        icon: const Icon(Icons.chat_bubble_outline),
 
-        label: const Text('Talk to AI'),
+        label: const Text('Ask AI'),
 
       ),
 
@@ -1117,7 +1117,10 @@ if (showMessage) {
 
     return RefreshIndicator(
 
-      onRefresh: () => loadBackendData(showMessage: true),
+      onRefresh: () async {
+        await loadBackendData(showMessage: true);
+        await _loadIntelligenceContext();
+      },
 
       child: ListView(
 
