@@ -566,3 +566,70 @@ def test_legacy_positive_stock_can_be_assigned_to_opening_batch_once(client, db_
         json={"batch_number": "LEGACY-RICE-02", "expiry_date": "2027-12-31"},
     )
     assert duplicate.status_code == 409
+
+
+def test_owner_can_revoke_pending_employee_invitation(client):
+    owner = register_owner(client, "employee-invite-owner@example.com")
+    shop_id = owner["shop"]["id"]
+    invited = client.post(
+        f"/auth/shops/{shop_id}/employees/invitations",
+        headers=auth(owner["access_token"]),
+        json={"email": "new-employee@example.com"},
+    )
+    assert invited.status_code == 201, invited.text
+    invitation_id = invited.json()["invitation_id"]
+    listed = client.get(
+        f"/auth/shops/{shop_id}/employees/invitations",
+        headers=auth(owner["access_token"]),
+    )
+    assert listed.status_code == 200
+    assert any(row["invitation_id"] == invitation_id and row["status"] == "pending"
+               for row in listed.json())
+
+    revoked = client.delete(
+        f"/auth/shops/{shop_id}/employees/invitations/{invitation_id}",
+        headers=auth(owner["access_token"]),
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+
+    accepted = client.post("/auth/employees/accept-invitation", json={
+        "invitation_token": invited.json()["invitation_token"],
+        "full_name": "New Employee",
+        "password": "EmployeePass@123",
+    })
+    assert accepted.status_code == 404
+
+
+def test_supplier_can_update_only_its_own_profile(client):
+    first = client.post("/auth/register/distributor", json={
+        "full_name": "First Supplier",
+        "email": "first-profile-supplier@example.com",
+        "password": "SupplierPass@123",
+        "business_name": "First Wholesale",
+    })
+    second = client.post("/auth/register/distributor", json={
+        "full_name": "Second Supplier",
+        "email": "second-profile-supplier@example.com",
+        "password": "SupplierPass@123",
+        "business_name": "Second Wholesale",
+    })
+    assert first.status_code == 201 and second.status_code == 201
+
+    updated = client.put("/supplier/profile", headers=auth(first.json()["access_token"]), json={
+        "name": "First Wholesale Updated",
+        "contact_person": "Updated Contact",
+        "phone": "9876543210",
+        "address": "Bengaluru",
+        "gstin": None,
+        "notes": "Delivers grocery items",
+    })
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["name"] == "First Wholesale Updated"
+
+    own_profile = client.get("/supplier/profile", headers=auth(first.json()["access_token"]))
+    other_profile = client.get("/supplier/profile", headers=auth(second.json()["access_token"]))
+    assert own_profile.status_code == 200
+    assert own_profile.json()["name"] == "First Wholesale Updated"
+    assert other_profile.status_code == 200
+    assert other_profile.json()["name"] == "Second Wholesale"
