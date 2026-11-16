@@ -769,4 +769,28 @@ class ApiService {
   }
 
 
+  static Future<List<dynamic>> getSupplierIssues({String? status}) async {
+    final shopId = await _requireActiveShopId();
+    final suffix = status == null ? '' : '?status=${Uri.encodeQueryComponent(status)}';
+    return _requestList('/shops/$shopId/supplier-issues$suffix');
+  }
+
+  static Future<Map<String, dynamic>> createSupplierIssue({
+    required int supplierId, int? purchaseId,
+    required String issueType, required String description,
+    String severity = 'medium',
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/supplier-issues', body: {
+      'supplier_id': supplierId, 'purchase_id': purchaseId,
+      'issue_type': issueType, 'description': description, 'severity': severity,
+    });
+  }
+
+  static Future<Map<String, dynamic>> resolveSupplierIssue(int issueId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PATCH', '/shops/$shopId/supplier-issues/$issueId/resolve');
+  }
+
+
 }
