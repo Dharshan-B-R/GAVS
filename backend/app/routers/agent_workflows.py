@@ -1,5 +1,5 @@
 """Shop-staff read-only endpoints for KiranaAI intelligence specialists."""
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.auth.routes import require_shop_staff, get_current_user
 from app.models.user import User
+from app.models.festival_event import FestivalEvent
 from app.services.demand_forecast_service import forecast_demand
 from app.services.reorder_service import build_reorder_recommendations
 from app.agents.supplier_agent import compare_suppliers
@@ -139,9 +140,33 @@ def orchestrate_question(shop_id: int, payload: dict,
             elif name == "seasonal":
                 results["seasonal"] = analyze_seasonal_demand(db, shop_id=shop_id)
             elif name == "event":
+                saved_events = db.query(FestivalEvent).filter(
+                    FestivalEvent.shop_id == shop_id,
+                    FestivalEvent.is_active.is_(True),
+                ).order_by(FestivalEvent.event_date.desc()).limit(30).all()
+                completed = [
+                    event for event in saved_events
+                    if event.event_date <= date.today() - timedelta(days=7)
+                ]
+                comparisons = []
+                for event in completed[:5]:
+                    comparisons.append(analyze_event_demand(
+                        db, shop_id, event.name, event.event_date,
+                        window_days=7, baseline_days=56, limit=20,
+                    ))
+                upcoming = [
+                    {"event_id": event.id, "name": event.name,
+                     "event_date": event.event_date, "event_type": event.event_type}
+                    for event in saved_events if event.event_date > date.today()
+                ]
                 results["event"] = {
-                    "status": "requires_event_parameters",
-                    "message": "Use the event-demand endpoint with event_name, event_start and window_days.",
+                    "status": "available" if comparisons or upcoming else "no_saved_events",
+                    "comparisons": comparisons,
+                    "upcoming_events": upcoming,
+                    "message": (
+                        "Comparisons use saved event dates and recorded sales only. "
+                        "Future events are shown as planning context, not predicted uplift."
+                    ),
                 }
             elif name == "reorder":
                 results["reorder"] = build_reorder_recommendations(db, shop_id=shop_id)
