@@ -31,6 +31,14 @@ router = APIRouter(tags=["Shop Operations and Supplier Workspace"])
 class SupplierConnectionInput(BaseModel):
     supplier_id: int = Field(gt=0)
 
+class SupplierProfileUpdate(BaseModel):
+    name: str = Field(min_length=2, max_length=150)
+    contact_person: str | None = Field(default=None, max_length=150)
+    phone: str | None = Field(default=None, max_length=20)
+    address: str | None = Field(default=None, max_length=2000)
+    gstin: str | None = Field(default=None, min_length=15, max_length=15)
+    notes: str | None = Field(default=None, max_length=2000)
+
 
 class ProductAliasInput(BaseModel):
     product_id: int = Field(gt=0)
@@ -191,6 +199,34 @@ def supplier_profile(current_supplier: Supplier = Depends(get_current_distributo
         "email": current_supplier.email,
         "phone": current_supplier.phone,
         "address": current_supplier.address,
+        "gstin": current_supplier.gstin,
+        "notes": current_supplier.notes,
+    }
+
+
+@router.put("/supplier/profile")
+def update_supplier_profile(
+    payload: SupplierProfileUpdate,
+    current_supplier: Supplier = Depends(get_current_distributor),
+    db: Session = Depends(get_db),
+):
+    current_supplier.name = payload.name.strip()
+    current_supplier.contact_person = payload.contact_person.strip() if payload.contact_person else None
+    current_supplier.phone = payload.phone.strip() if payload.phone else None
+    current_supplier.address = payload.address.strip() if payload.address else None
+    current_supplier.gstin = payload.gstin.strip().upper() if payload.gstin else None
+    current_supplier.notes = payload.notes.strip() if payload.notes else None
+    db.commit()
+    db.refresh(current_supplier)
+    return {
+        "supplier_id": current_supplier.id,
+        "name": current_supplier.name,
+        "contact_person": current_supplier.contact_person,
+        "email": current_supplier.email,
+        "phone": current_supplier.phone,
+        "address": current_supplier.address,
+        "gstin": current_supplier.gstin,
+        "notes": current_supplier.notes,
     }
 
 
@@ -203,7 +239,6 @@ def supplier_orders(
         Shop, Shop.id == Purchase.shop_id
     ).options(joinedload(Purchase.items).joinedload(PurchaseItem.product)).filter(
         Purchase.supplier_id == current_supplier.id,
-        Purchase.status.in_(["ordered", "confirmed"]),
     ).order_by(Purchase.created_at.desc()).limit(100).all()
     return [{
         "purchase_id": purchase.id,
@@ -213,6 +248,7 @@ def supplier_orders(
         "status": purchase.status,
         "total_amount": purchase.total_amount,
         "created_at": purchase.created_at,
+        "expected_delivery_date": purchase.expected_delivery_date,
         "items": [{
             "product_id": item.product_id,
             "product_name": item.product.name if item.product else None,
