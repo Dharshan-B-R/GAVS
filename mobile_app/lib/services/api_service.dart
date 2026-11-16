@@ -759,4 +759,14 @@ class ApiService {
   }
 
 
+  static Future<Map<String, dynamic>> updateShopIntelligenceSettings({
+    required String city, required String state,
+    String country = 'India', String timezone = 'Asia/Kolkata',
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PUT', '/shops/$shopId/intelligence-settings',
+      body: {'city': city, 'state': state, 'country': country, 'timezone': timezone});
+  }
+
+
 }
