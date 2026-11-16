@@ -4,12 +4,14 @@ The caller supplies the event dates. The service compares recorded units with
 the immediately preceding baseline and never applies a fabricated festival uplift.
 """
 from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.product import Product
 from app.models.stock_movement import StockMovement
+from app.models.shop import Shop
 
 
 def analyze_event_demand(
@@ -30,8 +32,15 @@ def analyze_event_demand(
     if not 1 <= limit <= 100:
         raise ValueError("limit must be between 1 and 100")
 
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+    if shop is None:
+        raise ValueError("Shop not found")
+    try:
+        local_today = datetime.now(ZoneInfo(shop.timezone or "Asia/Kolkata")).date()
+    except ZoneInfoNotFoundError:
+        raise ValueError("Shop timezone is invalid; configure a valid IANA timezone")
     event_end = event_start + timedelta(days=window_days)
-    if event_end > date.today() + timedelta(days=1):
+    if event_end > local_today + timedelta(days=1):
         raise ValueError("Event comparison is descriptive and requires a completed event window")
     baseline_start = event_start - timedelta(days=baseline_days)
     event_start_dt = datetime.combine(event_start, time.min, tzinfo=timezone.utc)
