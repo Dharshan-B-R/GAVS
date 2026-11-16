@@ -716,10 +716,11 @@ class ApiService {
     String? startDate, String? endDate,
   }) async {
     final shopId = await _requireActiveShopId();
-    final query = <String, String>{};
-    if (startDate != null) query['start_date'] = startDate;
-    if (endDate != null) query['end_date'] = endDate;
-    return _requestList('/shops/$shopId/festival-calendar', query: query);
+    final query = <String>[];
+    if (startDate != null) query.add('start_date=${Uri.encodeQueryComponent(startDate)}');
+    if (endDate != null) query.add('end_date=${Uri.encodeQueryComponent(endDate)}');
+    final suffix = query.isEmpty ? '' : '?${query.join('&')}';
+    return _requestList('/shops/$shopId/festival-calendar$suffix');
   }
 
   static Future<Map<String, dynamic>> addFestivalEvent({
