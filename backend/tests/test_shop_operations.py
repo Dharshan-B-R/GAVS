@@ -856,3 +856,83 @@ def test_supplier_can_update_only_own_order_fulfilment(client, db_session):
     assert forbidden.status_code == 404
     db_session.refresh(product)
     assert product.quantity == 0
+
+
+
+def test_stock_manager_product_and_batch_workflows_are_authorized(client, db_session):
+    owner = register_owner(client, "stock-manager-products@example.com")
+    shop_id = owner["shop"]["id"]
+    accepted = _create_employee(client, owner, shop_id, "stock-manager-products@example.com")
+    employee_id = accepted.json()["user"]["id"]
+    assigned = client.patch(
+        f"/shops/{shop_id}/employees/{employee_id}/job-role",
+        headers=auth(owner["access_token"]),
+        json={"job_role": "stock_manager"},
+    )
+    assert assigned.status_code == 200
+    headers = auth(accepted.json()["access_token"])
+
+    listed = client.get("/products", params={"shop_id": shop_id}, headers=headers)
+    assert listed.status_code == 200, listed.text
+
+    product = Product(
+        shop_id=shop_id, name="Stock Manager Batch Tea", quantity=0,
+        minimum_stock=1, purchase_price=100, selling_price=120,
+        unit="kg", is_active=True,
+    )
+    db_session.add(product)
+    db_session.flush()
+
+    created = client.post(
+        "/product-batches",
+        params={"shop_id": shop_id},
+        headers=headers,
+        json={
+            "product_id": product.id,
+            "batch_number": "STOCK-MANAGER-TEST-001",
+            "expiry_date": "2027-12-31",
+            "quantity": 4,
+            "purchase_price": 100,
+        },
+    )
+    assert created.status_code == 201, created.text
+    batch_id = created.json()["batch_id"]
+
+    verified = client.post(
+        f"/product-batches/{batch_id}/verify",
+        params={"shop_id": shop_id},
+        headers=headers,
+        json={"verified_quantity": 4},
+    )
+    assert verified.status_code == 200, verified.text
+
+    # Product archival remains owner-only.
+    archived = client.delete(
+        f"/products/{product.id}",
+        params={"shop_id": shop_id},
+        headers=headers,
+    )
+    assert archived.status_code == 403
+
+
+def test_model_check_constraints_match_employee_and_supplier_migrations():
+    from app.models.purchase import Purchase
+
+    membership_checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in ShopMembership.__table__.constraints
+        if constraint.__class__.__name__ == "CheckConstraint"
+    }
+    purchase_checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in Purchase.__table__.constraints
+        if constraint.__class__.__name__ == "CheckConstraint"
+    }
+    assert "ck_shop_membership_job_role" in membership_checks
+    assert "job_role IN ('manager', 'cashier', 'stock_manager')" in membership_checks[
+        "ck_shop_membership_job_role"
+    ]
+    assert "ck_purchase_supplier_status" in purchase_checks
+    assert "supplier_status IN ('pending', 'preparing', 'dispatched', 'delayed')" in purchase_checks[
+        "ck_purchase_supplier_status"
+    ]
