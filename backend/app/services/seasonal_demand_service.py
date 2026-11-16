@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.product import Product
 from app.models.stock_movement import StockMovement
+from app.models.shop import Shop
 
 
 def analyze_seasonal_demand(
@@ -16,9 +17,15 @@ def analyze_seasonal_demand(
     if not 1 <= limit <= 100:
         raise ValueError("limit must be between 1 and 100")
 
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+    if shop is None:
+        raise ValueError("Shop not found")
+    # PostgreSQL timezone() converts stored UTC timestamps into the shop's
+    # configured local clock before month/day grouping.
+    local_created_at = func.timezone(shop.timezone or "Asia/Kolkata", StockMovement.created_at)
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=history_days)
-    month_expr = func.extract("month", StockMovement.created_at).label("month")
+    month_expr = func.extract("month", local_created_at).label("month")
     rows = (
         db.query(
             Product.id,
@@ -26,7 +33,7 @@ def analyze_seasonal_demand(
             Product.unit,
             month_expr,
             func.sum(-StockMovement.quantity_change).label("units_sold"),
-            func.count(func.distinct(func.date(StockMovement.created_at))).label("selling_days"),
+            func.count(func.distinct(func.date(local_created_at))).label("selling_days"),
         )
         .join(StockMovement, StockMovement.product_id == Product.id)
         .filter(
