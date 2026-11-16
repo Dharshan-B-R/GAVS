@@ -74,7 +74,10 @@ def analyze_supplier_performance(db: Session, shop_id: int, limit: int = 100) ->
             "fill_rate": round(min(received / ordered, 1.0), 4) if ordered > 0 else None,
             "supplier_issue_count": len(issue_rows),
             "orders_with_issues": len(affected_order_ids),
-            "issue_rate": round(len(affected_order_ids) / item["orders"], 4) if item["orders"] else None,
+            "issue_rate": (
+                round(len(affected_order_ids) / item["orders"], 4)
+                if issue_rows and affected_order_ids and item["orders"] else None
+            ),
             "open_issue_count": sum(1 for issue in issue_rows if issue.status == "open"),
             "performance_status": "measured" if item["dated_deliveries"] or ordered > 0 else "insufficient_delivery_evidence",
         })
