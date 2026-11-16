@@ -73,8 +73,9 @@ def test_phase2_end_to_end_owner_journey(client):
         response = client.get(route, headers=headers)
         assert response.status_code == 200, f"{route}: {response.status_code} {response.text}"
 
-    # 4. Save a festival/local-demand event and verify it is visible.
-    event_date = (date.today() + timedelta(days=45)).isoformat()
+    # 4. Save a completed festival event. Event comparison is descriptive and
+    # intentionally rejects future event windows.
+    event_date = (date.today() - timedelta(days=30)).isoformat()
     event = client.post(
         f"/shops/{shop_id}/festival-calendar",
         headers=headers,
