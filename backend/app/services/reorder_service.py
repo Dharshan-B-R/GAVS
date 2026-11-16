@@ -1,4 +1,4 @@
-"""Cash-aware reorder ranking. Advisory only; it never creates a purchase."""
+""""Cash-aware reorder ranking. Advisory only; it never creates a purchase."""
 from decimal import Decimal, ROUND_CEILING
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -120,4 +120,3 @@ def build_reorder_recommendations(
             "No purchase proposal, order, supplier contact or stock movement is created",
         ],
     }
-}
