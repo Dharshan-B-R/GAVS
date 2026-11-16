@@ -481,6 +481,7 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   double _committedBudget = 0;
   double _remainingBudget = 0;
   final TextEditingController _employeeEmailController = TextEditingController();
+  final TextEditingController _legacyCustomerIdController = TextEditingController();
   List<dynamic> _employees = [];
   bool _employeesLoading = false;
   final TextEditingController _saleQuantityController = TextEditingController(text: '1');
@@ -564,6 +565,7 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
     _budgetController.dispose();
     _supplierIdController.dispose();
     _employeeEmailController.dispose();
+    _legacyCustomerIdController.dispose();
     super.dispose();
   }
 
@@ -2903,6 +2905,7 @@ if (showMessage) {
     String severity = 'medium';
     final type = TextEditingController();
     final description = TextEditingController();
+    final purchaseIdText = TextEditingController();
     final accepted = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(builder: (context, updateDialog) =>
@@ -2924,6 +2927,8 @@ if (showMessage) {
             TextField(controller: type, decoration: const InputDecoration(labelText: 'Issue type (short label)')),
             TextField(controller: description, maxLines: 3,
               decoration: const InputDecoration(labelText: 'Describe the issue')),
+            TextField(controller: purchaseIdText, keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Related purchase ID (optional)')),
             DropdownButtonFormField<String>(
               value: severity,
               decoration: const InputDecoration(labelText: 'Severity'),
@@ -2946,7 +2951,9 @@ if (showMessage) {
     if (accepted == true && type.text.trim().isNotEmpty && description.text.trim().isNotEmpty) {
       try {
         await ApiService.createSupplierIssue(
-          supplierId: selectedSupplier, issueType: type.text.trim(),
+          supplierId: selectedSupplier,
+          purchaseId: int.tryParse(purchaseIdText.text.trim()),
+          issueType: type.text.trim(),
           description: description.text.trim(), severity: severity);
         await _loadIntelligenceContext();
         if (mounted) showSnackBar('Supplier issue recorded.');
@@ -2956,6 +2963,7 @@ if (showMessage) {
     }
     type.dispose();
     description.dispose();
+    purchaseIdText.dispose();
   }
 
   Future<void> _resolveSupplierIssue(int issueId) async {
