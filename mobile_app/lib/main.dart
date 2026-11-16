@@ -3521,7 +3521,37 @@ if (showMessage) {
           const Text('Shop Intelligence',
             style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
-          const Text('Read-only insights from recorded shop data. Recommendations never place orders.'),
+          const Text('Simple advice to help you decide what to stock, sell and buy.'),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(children: [
+                    Icon(Icons.lightbulb_outline),
+                    SizedBox(width: 8),
+                    Text('How to use your shop agents',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                  ]),
+                  const SizedBox(height: 8),
+                  const Text('1. Tap Refresh intelligence to update your shop insights.'),
+                  const SizedBox(height: 4),
+                  const Text('2. Open an insight such as Expiry, Stockout or Reorder to see which products need attention and what you can do.'),
+                  const SizedBox(height: 4),
+                  const Text('3. Tap Talk to AI to ask a question in your own words.'),
+                  const SizedBox(height: 10),
+                  const Text('Try asking:',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  const Text('“Which products should I reorder today?”'),
+                  const Text('“What is expiring soon?”'),
+                  const Text('“Which products are not selling?”'),
+                ],
+              ),
+            ),
+          ),
           const SizedBox(height: 14),
           FilledButton.icon(
             onPressed: _intelligenceLoading ? null : () => _loadPhase2Intelligence(showMessage: true),
