@@ -760,6 +760,41 @@ def test_stock_manager_can_view_stock_but_not_supplier_administration(client, db
 
     headers = auth(accepted.json()["access_token"])
     assert client.get(f"/shops/{shop_id}/inventory/batches", headers=headers).status_code == 200
+    # Exact /products route and batch routes must be available to stock managers.
+    product_list = client.get("/products", params={"shop_id": shop_id}, headers=headers)
+    assert product_list.status_code == 200, product_list.text
+
+    product = Product(
+        shop_id=shop_id, name="Stock Manager Tea", quantity=0, minimum_stock=2,
+        purchase_price=100, selling_price=120, unit="kg", is_active=True,
+    )
+    db_session.add(product)
+    db_session.flush()
+    created_batch = client.post(
+        "/product-batches",
+        params={"shop_id": shop_id},
+        headers=headers,
+        json={
+            "product_id": product.id,
+            "batch_number": "STOCK-MANAGER-001",
+            "expiry_date": "2027-12-31",
+            "quantity": 5,
+            "purchase_price": 100,
+        },
+    )
+    assert created_batch.status_code == 201, created_batch.text
+    batch_id = created_batch.json()["batch_id"]
+    verified = client.post(
+        f"/product-batches/{batch_id}/verify",
+        params={"shop_id": shop_id},
+        headers=headers,
+        json={"verified_quantity": 5},
+    )
+    assert verified.status_code == 200, verified.text
+
+    assert client.delete(
+        "/products/1", params={"shop_id": shop_id}, headers=headers
+    ).status_code == 403
     assert client.get(f"/shops/{shop_id}/distributors", headers=headers).status_code == 403
     assert client.get(
         f"/shops/{shop_id}/agents/financial-position", headers=headers
