@@ -60,6 +60,8 @@ class PurchaseReceiptItem(BaseModel):
 
 class PurchaseReceiptCreate(BaseModel):
     items: list[PurchaseReceiptItem] = Field(min_length=1, max_length=100)
+    invoice_number: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    invoice_amount: Optional[Decimal] = Field(default=None, ge=0, max_digits=14, decimal_places=2)
 
 
 def _money(value: Decimal) -> Decimal:
@@ -420,6 +422,11 @@ def receive_approved_purchase_order(
         return {"purchase_id": purchase.id, "status": "received", "message": "Goods for this purchase order were already received"}
     if purchase.status not in {"ordered", "confirmed"}:
         raise HTTPException(409, "Only ordered or supplier-confirmed purchase orders can be received")
+    if (payload.invoice_number is None) != (payload.invoice_amount is None):
+        raise HTTPException(422, "Provide both invoice_number and invoice_amount, or leave both blank")
+    if payload.invoice_number is not None:
+        purchase.invoice_number = payload.invoice_number.strip()
+        purchase.invoice_amount = float(payload.invoice_amount)
 
     order_items = db.query(PurchaseItem).filter(
         PurchaseItem.purchase_id == purchase.id
