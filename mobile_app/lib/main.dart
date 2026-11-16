@@ -2692,7 +2692,18 @@ if (showMessage) {
                 title: Text(order['purchase_order_number']?.toString() ?? 'Purchase order'),
                 subtitle: Text('Status: $status · ₹${order['total_amount']}'),
                 trailing: (status == 'ordered' || status == 'confirmed')
-                    ? TextButton(onPressed: () => _receivePurchaseOrder(order), child: const Text('Receive'))
+                    ? Wrap(mainAxisSize: MainAxisSize.min, spacing: 4, children: [
+                        IconButton(
+                          tooltip: 'Set supplier-promised delivery date',
+                          icon: const Icon(Icons.event_available_outlined),
+                          onPressed: () => _setExpectedDeliveryDate(order),
+                        ),
+                        IconButton(
+                          tooltip: 'Receive goods',
+                          icon: const Icon(Icons.inventory),
+                          onPressed: () => _receivePurchaseOrder(order),
+                        ),
+                      ])
                     : const Icon(Icons.check_circle, color: Colors.green),
               ));
             }),
@@ -2865,6 +2876,57 @@ if (showMessage) {
     } finally {
       if (mounted) setState(() => _availabilityCapturing = false);
     }
+  }
+
+
+  Future<void> _setExpectedDeliveryDate(Map<String, dynamic> order) async {
+    final purchaseId = (order['purchase_id'] as num?)?.toInt();
+    if (purchaseId == null) return;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now().add(const Duration(days: 3)),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (picked == null) return;
+    try {
+      await ApiService.setExpectedSupplierDeliveryDate(
+        purchaseId, picked.toIso8601String().split('T').first);
+      await _loadPurchasePlanning();
+      if (mounted) showSnackBar('Supplier-promised delivery date saved.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not save delivery date: $error', isError: true);
+    }
+  }
+
+  Future<void> _configureShopLocation() async {
+    final city = TextEditingController();
+    final state = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Shop location'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: city, decoration: const InputDecoration(labelText: 'City')),
+          TextField(controller: state, decoration: const InputDecoration(labelText: 'State')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save location')),
+        ],
+      ),
+    );
+    if (accepted == true && city.text.trim().isNotEmpty && state.text.trim().isNotEmpty) {
+      try {
+        await ApiService.updateShopIntelligenceSettings(
+          city: city.text.trim(), state: state.text.trim());
+        if (mounted) showSnackBar('Shop location saved for local intelligence.');
+      } catch (error) {
+        if (mounted) showSnackBar('Could not save shop location: $error', isError: true);
+      }
+    }
+    city.dispose();
+    state.dispose();
   }
 
   Future<void> _addFestivalEvent() async {
@@ -3061,12 +3123,20 @@ if (showMessage) {
                 style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
               const SizedBox(height: 6),
               const Text('Add local events for later comparison with your shop’s recorded sales.'),
-              Align(alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: _addFestivalEvent,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add event'),
-                )),
+              if (widget.userRole == 'owner')
+                Align(alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: _addFestivalEvent,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add event'),
+                  )),
+              if (widget.userRole == 'owner')
+                Align(alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: _configureShopLocation,
+                    icon: const Icon(Icons.location_on_outlined),
+                    label: const Text('Set shop location'),
+                  )),
               if (_festivalEvents.isEmpty)
                 const Text('No local events saved yet.'),
               ..._festivalEvents.take(8).map((raw) {
