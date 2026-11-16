@@ -45,7 +45,8 @@ jobs:
         run: |
           PGPASSWORD=postgres createdb -h localhost -U postgres kiranaai_fresh
           DATABASE_URL=postgresql://postgres:postgres@localhost:5432/kiranaai_fresh python backend/scripts/bootstrap_fresh_database.py
-          DATABASE_URL=postgresql://postgres:postgres@localhost:5432/kiranaai_fresh alembic -c backend/alembic.ini current
+          cd backend
+          DATABASE_URL=postgresql://postgres:postgres@localhost:5432/kiranaai_fresh alembic current
       - name: Run backend tests
         working-directory: backend
         run: python -m pytest tests -v
