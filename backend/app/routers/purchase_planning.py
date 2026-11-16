@@ -55,6 +55,7 @@ class PurchaseReceiptItem(BaseModel):
     purchase_item_id: int = Field(gt=0)
     batch_number: str = Field(min_length=1, max_length=100)
     expiry_date: date
+    received_quantity: Optional[Decimal] = Field(default=None, gt=0, max_digits=14, decimal_places=3)
 
 
 class PurchaseReceiptCreate(BaseModel):
@@ -442,7 +443,10 @@ def receive_approved_purchase_order(
         if product is None:
             raise HTTPException(409, "A purchase-order product is no longer active in this shop")
         before = float(product.quantity or 0)
-        received_quantity = float(order_item.quantity)
+        ordered_quantity = float(order_item.ordered_quantity if order_item.ordered_quantity is not None else order_item.quantity)
+        received_quantity = float(receipt.received_quantity) if receipt.received_quantity is not None else ordered_quantity
+        if received_quantity > ordered_quantity + 0.000001:
+            raise HTTPException(400, f"Received quantity for purchase item {order_item.id} cannot exceed ordered quantity")
         batch = ProductBatch(
             product_id=product.id,
             batch_number=receipt.batch_number.strip(),
@@ -461,21 +465,20 @@ def receive_approved_purchase_order(
             quantity_change=received_quantity,
             quantity_before=before,
             quantity_after=product.quantity,
-            reason=f"Goods received against PO {purchase.invoice_number}",
+            reason=f"Goods received ({received_quantity:g} of {ordered_quantity:g}) against PO {purchase.invoice_number}",
             performed_by=current_user.id,
             reference_type="purchase",
             reference_id=purchase.id,
         )
         db.add(movement)
         order_item.batch_id = batch.id
+        order_item.received_quantity = received_quantity
+        if order_item.ordered_quantity is None:
+            order_item.ordered_quantity = ordered_quantity
 
     purchase.status = "received"
     purchase.received_at = datetime.now(timezone.utc)
     purchase.purchase_date = purchase.received_at
-    for order_item in order_items:
-        order_item.received_quantity = float(order_item.quantity)
-        if order_item.ordered_quantity is None:
-            order_item.ordered_quantity = float(order_item.quantity)
     db.commit()
     return {
         "purchase_id": purchase.id,
