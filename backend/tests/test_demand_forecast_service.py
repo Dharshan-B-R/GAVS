@@ -50,7 +50,8 @@ def test_forecast_uses_recorded_sale_movements(db_session):
     assert row["units_sold"] == 60
     assert row["average_daily_demand"] == 2
     assert row["forecast_next_30_days"] == 60
-    assert row["confidence"] == "medium"
+    # One observed selling day in a 30-day window is intentionally low confidence.
+    assert row["confidence"] == "low"
 
 
 def test_reorder_uses_verified_unexpired_stock_only(db_session):
