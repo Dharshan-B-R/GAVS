@@ -18,6 +18,5 @@ Example cron schedule (runs daily at 23:55 server time):
 ```
 
 Choose the schedule based on the deployment server timezone and operational
-requirements. The API also exposes a manual shop-scoped capture button in Flutter.
-Do not run this command before the migration that creates
-`inventory_availability_snapshots` has been applied.
+requirements. The combined job also generates shop-level daily summaries and refreshes deduplicated expiry, stockout and dead-stock alerts. The API also exposes a manual shop-scoped capture button in Flutter.
+Do not run this command before all Phase 2 migrations for availability snapshots, alerts, daily summaries and feedback have been applied.
