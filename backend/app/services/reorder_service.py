@@ -1,9 +1,12 @@
 """Cash-aware reorder ranking. Advisory only; it never creates a purchase."""
 from decimal import Decimal, ROUND_CEILING
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
 from app.models.product import Product
+from app.models.shop import Shop
 from app.models.shop_purchase_budget import ShopPurchaseBudget
 from app.services.demand_forecast_service import forecast_demand
 from app.services.inventory_intelligence_service import _saleable_subquery
@@ -19,7 +22,9 @@ def build_reorder_recommendations(
         raise ValueError("limit must be between 1 and 100")
 
     forecast = forecast_demand(db, days=days, limit=limit, shop_id=shop_id)
-    saleable = _saleable_subquery(db, shop_id)
+    shop = db.query(Shop).filter(Shop.id == shop_id).first() if shop_id is not None else None
+    local_today = datetime.now(ZoneInfo(shop.timezone if shop and shop.timezone else "UTC")).date()
+    saleable = _saleable_subquery(db, shop_id, as_of_date=local_today)
     budget_row = db.query(ShopPurchaseBudget).filter(
         ShopPurchaseBudget.shop_id == shop_id
     ).first() if shop_id is not None else None
