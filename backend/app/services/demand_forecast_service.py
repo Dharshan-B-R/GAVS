@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.product import Product
 from app.models.stock_movement import StockMovement
+from app.models.inventory_availability_snapshot import InventoryAvailabilitySnapshot
 
 
 def forecast_demand(
@@ -59,7 +60,23 @@ def forecast_demand(
         item = observations[product.id]
         units = item["units"]
         selling_days = len(item["selling_days"])
-        daily = units / days
+        snapshots = db.query(InventoryAvailabilitySnapshot).filter(
+            InventoryAvailabilitySnapshot.shop_id == product.shop_id,
+            InventoryAvailabilitySnapshot.product_id == product.id,
+            InventoryAvailabilitySnapshot.snapshot_date >= start.date(),
+            InventoryAvailabilitySnapshot.snapshot_date <= end.date(),
+        ).all()
+        availability_dates = {row.snapshot_date for row in snapshots}
+        available_dates = {row.snapshot_date for row in snapshots if row.is_available}
+        unavailable_dates = {row.snapshot_date for row in snapshots if not row.is_available}
+        availability_coverage = len(availability_dates) / days
+        availability_adjusted = len(availability_dates) >= max(7, int(days * 0.5)) and len(available_dates) >= 3
+        forecast_units = (
+            sum(item["daily_units"].get(day, 0.0) for day in available_dates)
+            if availability_adjusted else units
+        )
+        demand_days = len(available_dates) if availability_adjusted else days
+        daily = forecast_units / demand_days if demand_days else 0.0
         coverage = selling_days / days
         weekday_profile = []
         weekday_covered = True
@@ -75,9 +92,11 @@ def forecast_demand(
                 ),
             })
 
-        if units <= 0 or selling_days < 3:
+        if forecast_units <= 0 or selling_days < 3:
             confidence = "low"
-        elif days >= 60 and coverage >= 0.25 and selling_days >= 14:
+        elif availability_adjusted and availability_coverage >= 0.7 and len(available_dates) >= 14:
+            confidence = "medium"
+        elif not snapshots and days >= 60 and coverage >= 0.25 and selling_days >= 14:
             confidence = "medium"
         else:
             confidence = "low"
@@ -89,15 +108,19 @@ def forecast_demand(
             "units_sold": round(units, 3),
             "selling_days": selling_days,
             "observed_selling_day_ratio": round(coverage, 3),
-            "average_daily_demand": round(daily, 4) if units > 0 else None,
-            "forecast_next_30_days": round(daily * 30, 2) if units > 0 else None,
+            "availability_snapshot_days": len(availability_dates),
+            "availability_coverage_ratio": round(availability_coverage, 3),
+            "observed_stockout_days": len(unavailable_dates),
+            "availability_adjusted": availability_adjusted,
+            "average_daily_demand": round(daily, 4) if forecast_units > 0 else None,
+            "forecast_next_30_days": round(daily * 30, 2) if forecast_units > 0 else None,
             "recorded_stock": float(product.quantity or 0),
             "minimum_stock": float(product.minimum_stock or 0),
             "unit": product.unit,
             "confidence": confidence,
             "weekday_profile": weekday_profile if weekday_covered else None,
             "observed_months": sorted(item["months"]),
-            "forecast_method": "observed_sales_velocity",
+            "forecast_method": "availability_adjusted_sales_velocity" if availability_adjusted else "observed_sales_velocity",
         })
 
     products.sort(key=lambda row: (
@@ -114,7 +137,8 @@ def forecast_demand(
         "limitations": [
             "Uses recorded sale stock movements only",
             "No-sale and missing observation days are not filled with estimated demand",
-            "Stockout-censored demand cannot be reconstructed without availability history",
+            "Availability-adjusted demand is used only when at least half the history window has explicit daily snapshots",
+            "Without sufficient snapshots, stockout-censored demand remains unknown and the basic sales-velocity forecast is retained",
             "Weekday profiles are descriptive and do not automatically change the forecast",
             "Festival, weather, promotion and price effects require separate validated observations",
         ],
