@@ -3396,19 +3396,53 @@ if (showMessage) {
     ));
   }
 
+  String _intelligenceLabel(String value) {
+    return value.replaceAll('_', ' ').split(' ').where((part) => part.isNotEmpty)
+        .map((part) => part[0].toUpperCase() + part.substring(1)).join(' ');
+  }
+
+  String _intelligenceDisplayValue(dynamic value) {
+    if (value == null) return 'Not available';
+    if (value is bool) return value ? 'Yes' : 'No';
+    if (value is double) return value.toStringAsFixed(2);
+    return value.toString();
+  }
+
+  String _intelligenceSummary(Map<String, dynamic> data) {
+    final status = data['status'];
+    if (status != null) return _intelligenceLabel(status.toString());
+    for (final key in ['batches', 'items', 'products', 'recommendations', 'risks']) {
+      final rows = data[key];
+      if (rows is List) return rows.isEmpty ? 'No ${_intelligenceLabel(key).toLowerCase()} found' : '${rows.length} ${_intelligenceLabel(key).toLowerCase()} to review';
+    }
+    final count = data['count'];
+    if (count is num) return '$count results';
+    if (data['message'] != null) return data['message'].toString();
+    return 'Shop data and evidence';
+  }
+
   Widget _intelligenceResultCard(String key, dynamic value) {
+    final data = value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{'result': value};
     final body = const JsonEncoder.withIndent('  ').convert(value);
-    return Card(child: ExpansionTile(
-      title: Text(key.replaceAll('_', ' ').toUpperCase(),
-        style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text(value is Map && value['status'] != null
-          ? value['status'].toString()
-          : 'Evidence and limitations'),
+    final highlights = data.entries.where((entry) => entry.value != null && entry.value is! Map && entry.value is! List && entry.key != 'analysis' && entry.key != 'message').take(5).toList();
+    final listCounts = data.entries.where((entry) => entry.value is List).toList();
+    return Card(clipBehavior: Clip.antiAlias, child: ExpansionTile(
+      leading: const Icon(Icons.insights_outlined),
+      title: Text(_intelligenceLabel(key), style: const TextStyle(fontWeight: FontWeight.w600)),
+      subtitle: Text(_intelligenceSummary(data)),
       children: [
-        Padding(
-          padding: const EdgeInsets.all(14),
-          child: Align(alignment: Alignment.centerLeft, child: SelectableText(body)),
-        ),
+        if (highlights.isNotEmpty || listCounts.isNotEmpty)
+          Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 12), child: Wrap(
+            spacing: 8, runSpacing: 8,
+            children: [
+              ...highlights.map((entry) => Chip(avatar: const Icon(Icons.analytics_outlined, size: 16), label: Text('${_intelligenceLabel(entry.key)}: ${_intelligenceDisplayValue(entry.value)}'))),
+              ...listCounts.map((entry) => Chip(avatar: const Icon(Icons.list_alt, size: 16), label: Text('${_intelligenceLabel(entry.key)}: ${(entry.value as List).length}'))),
+            ],
+          )),
+        if (data['message'] != null) Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 12), child: Align(alignment: Alignment.centerLeft, child: Text(data['message'].toString()))),
+        ExpansionTile(leading: const Icon(Icons.code, size: 18), title: const Text('Technical details'), children: [
+          Padding(padding: const EdgeInsets.all(14), child: Align(alignment: Alignment.centerLeft, child: SelectableText(body))),
+        ]),
       ],
     ));
   }
