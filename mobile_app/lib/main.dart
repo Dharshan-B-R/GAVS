@@ -501,6 +501,9 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   bool _availabilityCapturing = false;
   List<dynamic> _shopCustomers = [];
   List<dynamic> _supplierIssues = [];
+  List<dynamic> _intelligenceAlerts = [];
+  List<dynamic> _dailySummaries = [];
+  List<dynamic> _feedbackHistory = [];
   final List<Map<String, String>> _aiMessages = [
     {'role': 'assistant', 'text': 'Ask about low stock, expiry, dead stock, sales trends, forecasts or reorder recommendations.'},
   ];
@@ -2864,6 +2867,9 @@ if (showMessage) {
         ApiService.getShopCustomers(),
         ApiService.getSupplierIssues(status: 'open'),
         ApiService.getShopSuppliers(),
+        ApiService.getIntelligenceAlerts(),
+        ApiService.getIntelligenceDailySummaries(limit: 7),
+        ApiService.getRecommendationFeedback(limit: 10),
       ]);
       if (!mounted) return;
       setState(() {
@@ -2872,6 +2878,9 @@ if (showMessage) {
         _shopCustomers = values[2] as List<dynamic>;
         _supplierIssues = values[3] as List<dynamic>;
         _shopSuppliers = values[4] as List<dynamic>;
+        _intelligenceAlerts = values[5] as List<dynamic>;
+        _dailySummaries = values[6] as List<dynamic>;
+        _feedbackHistory = values[7] as List<dynamic>;
       });
     } catch (_) {
       // The primary intelligence response remains usable if optional context
@@ -2895,6 +2904,106 @@ if (showMessage) {
 
 
 
+
+
+  Future<void> _acknowledgeAlert(int alertId) async {
+    try {
+      await ApiService.acknowledgeIntelligenceAlert(alertId);
+      await _loadIntelligenceContext();
+      if (mounted) showSnackBar('Alert acknowledged.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not acknowledge alert: $error', isError: true);
+    }
+  }
+
+  Future<void> _generateDailySummary() async {
+    try {
+      await ApiService.generateIntelligenceDailySummary();
+      await _loadIntelligenceContext();
+      if (mounted) showSnackBar('Daily intelligence summary generated.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not generate summary: $error', isError: true);
+    }
+  }
+
+  Future<void> _recordRecommendationFeedback() async {
+    if (products.isEmpty) {
+      showSnackBar('Add products before recording recommendation feedback.', isError: true);
+      return;
+    }
+    int selectedProductId = products.first.id;
+    String decision = 'accepted';
+    final actualQty = TextEditingController();
+    final notes = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(builder: (context, updateDialog) =>
+        AlertDialog(
+          title: const Text('Recommendation feedback'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            DropdownButtonFormField<int>(
+              value: selectedProductId,
+              decoration: const InputDecoration(labelText: 'Product'),
+              items: products.map((product) => DropdownMenuItem<int>(
+                value: product.id, child: Text(product.name),
+              )).toList(),
+              onChanged: (value) { if (value != null) updateDialog(() => selectedProductId = value); },
+            ),
+            DropdownButtonFormField<String>(
+              value: decision,
+              decoration: const InputDecoration(labelText: 'Decision'),
+              items: const [
+                DropdownMenuItem(value: 'accepted', child: Text('Accepted')),
+                DropdownMenuItem(value: 'dismissed', child: Text('Dismissed')),
+                DropdownMenuItem(value: 'adjusted', child: Text('Adjusted quantity')),
+              ],
+              onChanged: (value) { if (value != null) updateDialog(() => decision = value); },
+            ),
+            if (decision == 'adjusted')
+              TextField(controller: actualQty,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Actual planned quantity')),
+            TextField(controller: notes, maxLines: 2,
+              decoration: const InputDecoration(labelText: 'Reason / notes (optional)')),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save feedback')),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true) {
+      final product = products.firstWhere((item) => item.id == selectedProductId);
+      final recommendation = restockRecommendations.where(
+        (item) => (item['product_id'] as num?)?.toInt() == selectedProductId,
+      ).firstOrNull;
+      final recommendedQty = recommendation == null
+          ? null
+          : _recommendationNumber(recommendation['suggested_quantity']);
+      final actual = double.tryParse(actualQty.text.trim());
+      if (decision == 'adjusted' && (actual == null || actual < 0)) {
+        if (mounted) showSnackBar('Enter a valid actual quantity.', isError: true);
+      } else {
+        try {
+          await ApiService.submitRecommendationFeedback(
+            recommendationKey: 'reorder:$selectedProductId:${DateTime.now().toIso8601String().substring(0, 10)}',
+            decision: decision,
+            productId: product.id,
+            recommendedQuantity: recommendedQty,
+            actualQuantity: decision == 'adjusted' ? actual : null,
+            notes: notes.text.trim().isEmpty ? null : notes.text.trim(),
+          );
+          await _loadIntelligenceContext();
+          if (mounted) showSnackBar('Recommendation feedback saved.');
+        } catch (error) {
+          if (mounted) showSnackBar('Could not save feedback: $error', isError: true);
+        }
+      }
+    }
+    actualQty.dispose();
+    notes.dispose();
+  }
 
   Future<void> _reportSupplierIssue() async {
     if (_shopSuppliers.isEmpty) {
@@ -3475,6 +3584,89 @@ if (showMessage) {
                   ),
                 );
               }),
+            ],
+          ))),
+
+          const SizedBox(height: 16),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                const Expanded(child: Text('Daily intelligence summary',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold))),
+                if (widget.userRole == 'owner')
+                  IconButton(
+                    tooltip: 'Generate summary now',
+                    onPressed: _generateDailySummary,
+                    icon: const Icon(Icons.summarize_outlined),
+                  ),
+              ]),
+              if (_dailySummaries.isEmpty)
+                const Text('No daily summary has been generated yet. Configure the scheduled job or generate one as the shop owner.'),
+              ..._dailySummaries.take(3).map((raw) {
+                final summary = raw as Map<String, dynamic>;
+                final payload = summary['payload'] as Map<String, dynamic>? ?? {};
+                final expiry = payload['expiry'] as Map<String, dynamic>? ?? {};
+                final stockout = payload['stockout'] as Map<String, dynamic>? ?? {};
+                final risks = stockout['summary'] as Map<String, dynamic>? ?? {};
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(summary['summary_date']?.toString() ?? 'Daily summary'),
+                  subtitle: Text('Expiry exposure ₹${expiry['estimated_cost_exposure'] ?? 0} · Stockout risks ${risks['stockout'] ?? 0}'),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.open_in_new),
+                    onPressed: () => showDialog<void>(
+                      context: context,
+                      builder: (dialogContext) => AlertDialog(
+                        title: Text('Summary ${summary['summary_date']}'),
+                        content: SizedBox(width: 520, child: SingleChildScrollView(
+                          child: SelectableText(const JsonEncoder.withIndent('  ').convert(payload)),
+                        )),
+                        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))],
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ))),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Actionable alerts (${_intelligenceAlerts.length})',
+                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              if (_intelligenceAlerts.isEmpty)
+                const Text('No open intelligence alerts.'),
+              ..._intelligenceAlerts.take(8).map((raw) {
+                final alert = raw as Map<String, dynamic>;
+                final id = (alert['alert_id'] as num).toInt();
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(alert['title']?.toString() ?? 'Alert'),
+                  subtitle: Text('${alert['severity']} · ${alert['message']}'),
+                  trailing: IconButton(
+                    tooltip: 'Acknowledge alert',
+                    icon: const Icon(Icons.done),
+                    onPressed: () => _acknowledgeAlert(id),
+                  ),
+                );
+              }),
+            ],
+          ))),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Recommendation feedback',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const Text('Record whether a reorder suggestion was accepted, dismissed or adjusted.'),
+              Align(alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _recordRecommendationFeedback,
+                  icon: const Icon(Icons.rate_review_outlined),
+                  label: const Text('Record feedback'),
+                )),
+              if (_feedbackHistory.isNotEmpty)
+                Text('${_feedbackHistory.length} recent feedback records available'),
             ],
           ))),
           if (specialistResults.isNotEmpty) ...[
