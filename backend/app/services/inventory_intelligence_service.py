@@ -50,7 +50,7 @@ def _sales_subquery(db: Session, days: int, shop_id: int | None = None):
     return query.subquery()
 
 
-def _saleable_subquery(db: Session, shop_id: int | None = None):
+def _saleable_subquery(db: Session, shop_id: int | None = None, as_of_date: date | None = None):
     """Only verified, unexpired positive batch stock is considered saleable."""
     query = (
         db.query(
@@ -60,7 +60,7 @@ def _saleable_subquery(db: Session, shop_id: int | None = None):
         .join(Product, Product.id == ProductBatch.product_id)
         .filter(
             ProductBatch.is_verified.is_(True),
-            ProductBatch.expiry_date >= date.today(),
+            ProductBatch.expiry_date >= (as_of_date or date.today()),
             ProductBatch.quantity > 0,
         )
         .group_by(ProductBatch.product_id)
