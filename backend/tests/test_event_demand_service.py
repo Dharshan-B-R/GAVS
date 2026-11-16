@@ -50,11 +50,15 @@ def test_event_demand_compares_event_with_observed_baseline(db_session):
     [{"event_name": ""}, {"window_days": 0}, {"baseline_days": 10}, {"limit": 0}],
 )
 def test_event_demand_validates_parameters(db_session, kwargs):
+    arguments = {"event_name": "Event", "event_start": date(2026, 11, 1)}
+    arguments.update(kwargs)
     with pytest.raises(ValueError):
-        analyze_event_demand(db_session, 1, "Event", date(2026, 11, 1), **kwargs)
+        analyze_event_demand(db_session, 1, **arguments)
 
 
 def test_event_demand_rejects_future_or_incomplete_window(db_session):
+    db_session.add(Shop(id=1, name="Future Event Shop"))
+    db_session.flush()
     with pytest.raises(ValueError, match="completed event window"):
         analyze_event_demand(
             db_session, 1, "Upcoming festival",
