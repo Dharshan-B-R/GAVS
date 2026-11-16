@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.purchase import Purchase
 from app.models.supplier import Supplier
+from app.models.supplier_issue import SupplierIssue
 
 
 def analyze_supplier_performance(db: Session, shop_id: int, limit: int = 100) -> dict:
@@ -49,6 +50,11 @@ def analyze_supplier_performance(db: Session, shop_id: int, limit: int = 100) ->
         supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
         ordered = item["ordered_qty"]
         received = item["received_qty"]
+        issue_rows = db.query(SupplierIssue).filter(
+            SupplierIssue.shop_id == shop_id,
+            SupplierIssue.supplier_id == supplier_id,
+        ).all()
+        affected_order_ids = {issue.purchase_id for issue in issue_rows if issue.purchase_id is not None}
         result.append({
             "supplier_id": supplier_id,
             "supplier_name": supplier.name,
@@ -62,6 +68,10 @@ def analyze_supplier_performance(db: Session, shop_id: int, limit: int = 100) ->
             "on_time_delivery_rate": round(item["on_time"] / item["dated_deliveries"], 4) if item["dated_deliveries"] else None,
             "on_time_delivery_sample_count": item["dated_deliveries"],
             "fill_rate": round(min(received / ordered, 1.0), 4) if ordered > 0 else None,
+            "supplier_issue_count": len(issue_rows),
+            "orders_with_issues": len(affected_order_ids),
+            "issue_rate": round(len(affected_order_ids) / item["orders"], 4) if item["orders"] else None,
+            "open_issue_count": sum(1 for issue in issue_rows if issue.status == "open"),
             "performance_status": "measured" if item["dated_deliveries"] or ordered > 0 else "insufficient_delivery_evidence",
         })
     result.sort(key=lambda row: (
@@ -76,7 +86,7 @@ def analyze_supplier_performance(db: Session, shop_id: int, limit: int = 100) ->
         "supplier_count": len(result),
         "suppliers": result,
         "unavailable_metrics": {
-            "issue_rate": "Supplier issue/dispute records are not present in the current schema.",
+            "issue_rate": "Calculated as received orders with a linked issue divided by received orders; unlinked issues are reported as counts only.",
             "on_time_delivery_rate": "Only orders with an explicitly recorded expected delivery date and receipt timestamp contribute.",
         },
         "limitations": [
