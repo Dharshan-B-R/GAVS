@@ -635,4 +635,59 @@ class ApiService {
   static Future<Map<String, dynamic>> confirmSupplierOrder(int purchaseId) async =>
       _requestJson('POST', '/supplier/orders/$purchaseId/confirm');
 
+  /// Run the Phase 2 read-only intelligence specialists for the active shop.
+  /// The orchestrator returns structured evidence and never places orders.
+  static Future<Map<String, dynamic>> getPhase2IntelligenceSnapshot() async {
+    return getInventoryAgentAnswer(
+      'Show expiry risk, dead stock, stockout risk, seasonal demand, '
+      'supplier performance and financial position for this shop.',
+    );
+  }
+
+  static Future<Map<String, dynamic>> getExpiryIntelligence({
+    int horizonDays = 30,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/expiry-risk',
+      query: {'horizon_days': horizonDays.toString()});
+  }
+
+  static Future<Map<String, dynamic>> getStockoutIntelligence({
+    int historyDays = 30,
+    int leadTimeDays = 7,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/stockout-risk',
+      query: {
+        'history_days': historyDays.toString(),
+        'lead_time_days': leadTimeDays.toString(),
+      });
+  }
+
+  static Future<Map<String, dynamic>> getDeadStockIntelligence({
+    int days = 90,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/dead-stock',
+      query: {'days': days.toString()});
+  }
+
+  static Future<Map<String, dynamic>> getSeasonalIntelligence({
+    int historyDays = 365,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/seasonal-demand',
+      query: {'history_days': historyDays.toString()});
+  }
+
+  static Future<Map<String, dynamic>> getSupplierPerformanceIntelligence() async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/supplier-performance');
+  }
+
+  static Future<Map<String, dynamic>> getFinancialIntelligence() async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/financial-position');
+  }
+
 }
