@@ -860,7 +860,7 @@ def test_supplier_can_update_only_own_order_fulfilment(client, db_session):
 
 
 def test_stock_manager_product_and_batch_workflows_are_authorized(client, db_session):
-    owner = register_owner(client, "stock-manager-products-employee@example.com")
+    owner = register_owner(client, "stock-manager-products-owner@example.com")
     shop_id = owner["shop"]["id"]
     accepted = _create_employee(client, owner, shop_id, "stock-manager-products-employee@example.com")
     employee_id = accepted.json()["user"]["id"]
