@@ -54,7 +54,11 @@ def analyze_supplier_performance(db: Session, shop_id: int, limit: int = 100) ->
             SupplierIssue.shop_id == shop_id,
             SupplierIssue.supplier_id == supplier_id,
         ).all()
-        affected_order_ids = {issue.purchase_id for issue in issue_rows if issue.purchase_id is not None}
+        eligible_purchase_ids = {purchase.id for purchase in purchases if purchase.supplier_id == supplier_id}
+        affected_order_ids = {
+            issue.purchase_id for issue in issue_rows
+            if issue.purchase_id is not None and issue.purchase_id in eligible_purchase_ids
+        }
         result.append({
             "supplier_id": supplier_id,
             "supplier_name": supplier.name,
