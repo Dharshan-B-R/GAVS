@@ -612,6 +612,11 @@ class ApiService {
     return _requestList('/shops/$shopId/employees');
   }
 
+  static Future<Map<String, dynamic>> revokeEmployeeInvitation(int invitationId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('DELETE', '/auth/shops/$shopId/employees/invitations/$invitationId');
+  }
+
   static Future<Map<String, dynamic>> inviteEmployee(String email) async {
     final shopId = await _requireActiveShopId();
     return _requestJson('POST', '/auth/shops/$shopId/employees/invitations',
