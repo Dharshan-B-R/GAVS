@@ -1,51 +1,57 @@
 # Phase 2 implementation tracker
 
-Phase 2 is being delivered incrementally on top of Phase 1. Implementation status below is based on committed code, not runtime verification. The consolidated test suite, Flutter checks, migration review and realistic-data validation remain deliberately on hold per the project instruction.
+Phase 2 intelligence is implemented incrementally on the dedicated `phase2-intelligence-completion` branch. This tracker distinguishes code that has been added from evidence that still requires real shop activity. Backend tests, Flutter checks, migration execution and realistic-data validation remain deliberately on hold until the project is ready for one consolidated test session.
 
-## Intelligence foundation already implemented
+## Intelligence capabilities
 
-| Capability | Backend implementation | API | Guardrail |
+| Capability | Implementation | API / app entry | Evidence and guardrail |
 |---|---|---|---|
-| Product Name Intelligence | Shop-scoped aliases, normalization and exact/fuzzy matching | `/shops/{shop_id}/product-aliases`, `/shops/{shop_id}/product-name-matches` | Fuzzy matches require human confirmation |
+| Product Name Intelligence | Shop-scoped aliases, normalization and exact/fuzzy matching | Product alias APIs | Fuzzy matches require human confirmation |
 | Expiry Intelligence | Batch expiry exposure, recorded disposal loss and supplier-credit reconciliation | `GET /shops/{shop_id}/agents/expiry-risk` | Pending actions are not realized losses |
-| Dead Stock | Mature active products with positive inventory and no recorded sale | `GET /shops/{shop_id}/agents/dead-stock` | Missing history is not treated as proof of no demand |
-| Stockout Risk | Recorded sale velocity vs verified, unexpired saleable stock | `GET /shops/{shop_id}/agents/stockout-risk` | Unknown demand remains unknown |
+| Dead Stock | Mature active products with positive inventory and no recorded sale | `GET /shops/{shop_id}/agents/dead-stock` | Missing history is not proof of no demand |
+| Stockout Risk | Recorded sale velocity vs verified, unexpired saleable stock | `GET /shops/{shop_id}/agents/stockout-risk` | Stockout-censored demand remains unknown without availability observations |
+| Availability History | Daily saleable batch snapshots, with one shop/product/date observation | `POST /shops/{shop_id}/availability-snapshots/capture` | Flutter has a manual daily capture action; no scheduler is installed |
+| Demand Forecast | Observed sales velocity, selling-day coverage, weekday profile and availability-adjusted velocity when snapshots cover at least half the requested window | `GET /shops/{shop_id}/agents/forecast` | Sparse or incomplete evidence is low confidence; no automatic seasonal uplift |
 | Seasonal Demand | Observed monthly sales patterns | `GET /shops/{shop_id}/agents/seasonal-demand` | Unobserved months remain null |
-| Festival / Event Demand | Completed caller-defined event window vs preceding baseline | `GET /shops/{shop_id}/agents/event-demand` | No assumed festival multiplier |
-| Supplier Price Intelligence | Weighted price comparisons from received invoices | `GET /shops/{shop_id}/agents/supplier-prices` | Does not normalize pack size/tax/freight |
-| Demand Forecast | Sales velocity with selling-day coverage, observed weekday profile and confidence metadata | `GET /shops/{shop_id}/agents/forecast` | No imputed demand or automatic seasonal uplift |
+| Festival / Event Demand | Shop-owned event calendar and event-window vs preceding baseline comparison | `/shops/{shop_id}/festival-calendar`, `GET /shops/{shop_id}/agents/event-demand/{event_id}` | Owner enters local events; only completed windows are compared |
 | Cash-aware Reorder Ranking | Saleable stock, lead time, safety stock, forecast confidence and owner-set budget prioritization | `GET /shops/{shop_id}/agents/reorder-recommendations` | Advisory only; no proposal or PO is created |
-| Supplier Performance | Recorded received-order volume/value and evidence availability | `GET /shops/{shop_id}/agents/supplier-performance` | Reliability/fill rate withheld until promised and short-receipt data exists |
-| Financial Position | Read-only supplier payables; khata returned unavailable unless customer ownership is shop-scoped | `GET /shops/{shop_id}/agents/financial-position` | Does not aggregate cross-shop customer balances |
-| Agent Orchestration | Expanded specialist routing, result aggregation and safe partial-result reporting | `POST /shops/{shop_id}/agents/orchestrate` | Staff restrictions retained; read-only |
+| Supplier Price Intelligence | Weighted price comparisons from received invoices | `GET /shops/{shop_id}/agents/supplier-prices` | Does not normalize pack size/tax/freight |
+| Supplier Performance | Ordered vs received quantity, promised vs actual delivery date and shop-recorded supplier issues | `GET /shops/{shop_id}/agents/supplier-performance` | Legacy records without dates are excluded from on-time denominator |
+| Supplier Issues | Shop-scoped issue reporting, severity and resolution tracking | `/shops/{shop_id}/supplier-issues` | Issue rate is only calculated from issues linked to eligible purchase orders |
+| Financial Position | Shop-scoped khata receivables and supplier payables | `GET /shops/{shop_id}/agents/financial-position` | Legacy customers remain excluded until an owner explicitly assigns them |
+| Agent Orchestration | Specialist routing, saved event comparisons, evidence and partial-result reporting | `POST /shops/{shop_id}/agents/orchestrate` | Read-only; staff/owner restrictions retained |
+| Flutter Intelligence | Dedicated Intelligence tab for snapshots, local calendar, khata ledger, supplier issues and specialist results | Mobile app | Owner-only configuration actions remain gated in UI and API |
 
-## Implemented in this completion branch
+## Data foundation added in this branch
 
-1. Forecast outputs now report selling-day coverage and observed weekday data. Sparse history is low confidence; no-sale periods are not treated as proven zero demand.
-2. Reorder recommendations now prioritize stockout urgency and forecast confidence, then fit ranked candidate recommendations within the configured owner cash budget. Deferred items remain visible.
-3. Supplier performance endpoint reports only recorded received purchase evidence. On-time rate, fill rate and issue rate remain unavailable because the current schema lacks promised dates, ordered-vs-received quantities and supplier-issue records.
-4. Financial position endpoint reports supplier payables from received purchases less recorded payments. Customer khata is intentionally withheld until customer ownership can be safely attributed to a shop; customer rows have no shop_id.
-5. Orchestrator understands expiry, financial and event intents and returns specialist results with explicit partial/insufficient evidence states.
-6. New API endpoints are staff-authorized and filtered using the requested shop id.
+- `customers.shop_id` is nullable. New customers are created under a shop; old records are not automatically assigned. An owner can explicitly assign a known legacy customer ID, carrying its existing ledger history to that shop.
+- `purchases.expected_delivery_date` and `purchases.received_at` support on-time delivery measurement. Owners record the promised date before receipt; the receipt workflow records actual receipt time.
+- `purchase_items.ordered_quantity` and `received_quantity` preserve ordered-vs-received quantities. Historical received rows are backfilled as fully received because earlier records had only one quantity field.
+- `shops.city`, `state`, `country` and `timezone` support shop-local event context. City/state can be configured from the Flutter Intelligence tab.
+- `festival_events` stores shop-specific festivals, local events, promotions and market days.
+- `inventory_availability_snapshots` stores saleable quantity and availability per product per date.
+- `supplier_issues` stores shop-scoped supplier issues, optional purchase linkage, severity and resolution state.
 
-## Remaining before Phase 2 can be called fully complete
+## Remaining operational requirements
 
-- Persist customer-to-shop ownership or shop-customer membership, then enable shop-scoped khata ageing.
-- Add promised delivery date, ordered quantity, received quantity and dispute/issue models before calculating true supplier performance.
-- Correctly model lost demand during stockouts with availability snapshots or POS out-of-stock events.
-- Add explicit festival calendar and locality configuration; event comparisons must remain grounded in actual recorded history.
-- Complete Flutter screens, API wiring, notifications, recommendation feedback and daily summaries.
-- Review migration compatibility and tenant isolation; add migrations only after confirming actual schema requirements.
-- Run consolidated backend tests, Flutter analysis/build, migration review and realistic-data validation only after explicit approval to test.
+1. **Daily availability capture:** The app currently exposes a manual capture action. A scheduled daily job/worker should be installed in the deployment environment so snapshot coverage is consistent without staff remembering to tap the button.
+2. **Local festival seed data:** Each shop owner should enter/confirm the relevant local calendar. No festival uplift is guessed from city alone.
+3. **Supplier issue linkage:** Staff should attach a purchase ID when reporting a supplier issue; unlinked issues are counted but do not inflate the per-order issue rate.
+4. **Khata legacy mapping:** Owners must map old customer IDs to the correct shop. Unassigned legacy customers are intentionally excluded from shop financial totals.
+5. **Accounting precision:** Khata ageing is based on oldest transaction, not contractual due dates. Cash balance, UPI/bank settlement and supplier invoice due dates need separate ledger data before cash-flow forecasting can be claimed.
+6. **Supplier evidence coverage:** Old purchases without promised dates or actual receipt timestamps do not contribute to on-time delivery rate. Future orders must have expected dates entered and receipt workflow completed.
+7. **Festival model quality:** Event comparisons require completed event windows and sufficient pre-event baseline history. Promotions, weather, stock availability and price effects are not causally separated yet.
+8. **Consolidated verification:** Run backend tests, Flutter analysis/build, migration review on a database copy, API permission checks and realistic-data validation only after explicit approval to test.
 
-## API safety
+## API and safety rules
 
-- Intelligence endpoints are read-only and require shop staff membership.
-- All product/sales/purchase metrics are filtered by the requested shop.
-- Purchase recommendations do not create proposals, spend money, contact suppliers or place orders.
-- Purchase execution remains a separate owner-approved workflow.
-- Insufficient history, missing data and unavailable metrics are reported explicitly rather than fabricated.
+- New intelligence data APIs are shop-scoped and use staff or owner dependencies as appropriate.
+- Legacy customer assignment is owner-only and refuses to move a customer already assigned to another shop.
+- Supplier issue creation requires an active supplier connection to the shop; a linked purchase must belong to that same shop and supplier.
+- Purchase recommendations never create proposals, spend money, contact suppliers or place orders.
+- Purchase order creation remains a separate owner-approved workflow; goods receipt is a separate recorded operation.
+- Missing history, unreported issue rates and unavailable accounting fields are represented as unknown rather than fabricated.
 
 ## Validation status
 
-**Testing is intentionally not run.** No test suite, Flutter analysis, migration, CI workflow or production data operation has been executed as part of this completion work. A code commit is not proof of test or production readiness.
+**Testing is intentionally not run.** No test suite, Flutter analysis/build, migration execution, CI workflow or production data operation has been executed for this branch. The new Alembic revisions must be reviewed and applied to a disposable/staging database before production rollout. A code commit is not proof of runtime or production readiness.
