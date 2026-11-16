@@ -2199,6 +2199,16 @@ if (showMessage) {
     }
   }
 
+  Future<void> _setEmployeeJobRole(int userId, String jobRole) async {
+    try {
+      await ApiService.setEmployeeJobRole(userId, jobRole);
+      await _loadEmployees();
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update employee role: $error')));
+    }
+  }
+
   Future<void> _toggleEmployee(int userId, bool active) async {
     try {
       await ApiService.setEmployeeStatus(userId, active);
@@ -4308,7 +4318,19 @@ if (showMessage) {
                 return SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text(employee['full_name'].toString()),
-                  subtitle: Text(employee['email'].toString()),
+                  subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(employee['email'].toString()),
+                    DropdownButton<String>(
+                      value: ['manager', 'cashier', 'stock_manager'].contains(employee['job_role']) ? employee['job_role'].toString() : 'manager',
+                      isDense: true,
+                      items: const [
+                        DropdownMenuItem(value: 'manager', child: Text('Manager')),
+                        DropdownMenuItem(value: 'cashier', child: Text('Cashier')),
+                        DropdownMenuItem(value: 'stock_manager', child: Text('Stock manager')),
+                      ],
+                      onChanged: (value) { if (value != null) _setEmployeeJobRole(userId, value); },
+                    ),
+                  ]),
                   value: employee['is_active'] == true,
                   onChanged: (active) => _toggleEmployee(userId, active),
                 );
