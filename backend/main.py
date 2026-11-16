@@ -12,6 +12,8 @@ from app.models.purchase_item import PurchaseItem
 from app.models.purchase_payment import PurchasePayment
 from app.models.customer import Customer
 from app.models.khata_transaction import KhataTransaction
+from app.models.festival_event import FestivalEvent
+from app.models.inventory_availability_snapshot import InventoryAvailabilitySnapshot
 from app.models.sale import Sale
 from app.models.sale_item import SaleItem
 
@@ -110,6 +112,9 @@ app.include_router(purchase_planning_router)
 
 from app.routers.agent_workflows import router as agent_workflows_router
 app.include_router(agent_workflows_router)
+
+from app.routers.intelligence_data import router as intelligence_data_router
+app.include_router(intelligence_data_router)
 
 from app.routers.shop_operations import router as shop_operations_router
 app.include_router(shop_operations_router)
