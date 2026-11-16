@@ -41,6 +41,7 @@ from app.models.purchase_proposal import PurchaseProposal
 from app.models.product_alias import ProductAlias
 from app.models.festival_event import FestivalEvent
 from app.models.inventory_availability_snapshot import InventoryAvailabilitySnapshot
+from app.models.supplier_issue import SupplierIssue
 
 
 # Alembic configuration object.
