@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Date, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, ForeignKey, CheckConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -7,6 +7,10 @@ from app.database import Base
 
 class Purchase(Base):
     __tablename__ = "purchases"
+
+    __table_args__ = (
+        CheckConstraint("supplier_status IN ('pending', 'preparing', 'dispatched', 'delayed')", name="ck_purchase_supplier_status"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     shop_id = Column(Integer, ForeignKey("shops.id", ondelete="RESTRICT"), nullable=False, index=True)
