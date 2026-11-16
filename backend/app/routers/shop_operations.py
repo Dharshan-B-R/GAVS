@@ -218,6 +218,8 @@ def supplier_orders(
             "product_name": item.product.name if item.product else None,
             "unit": item.product.unit if item.product else None,
             "quantity": item.quantity,
+            "ordered_quantity": item.ordered_quantity,
+            "received_quantity": item.received_quantity,
             "unit_price": item.unit_price,
             "subtotal": item.subtotal,
         } for item in purchase.items],
@@ -390,6 +392,8 @@ def list_shop_purchase_orders(
         "purchase_order_number": purchase.invoice_number,
         "status": purchase.status,
         "total_amount": purchase.total_amount,
+        "expected_delivery_date": purchase.expected_delivery_date,
+        "received_at": purchase.received_at,
         "items": [{
             "purchase_item_id": item.id,
             "product_id": item.product_id,
