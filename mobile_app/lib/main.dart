@@ -2975,9 +2975,13 @@ if (showMessage) {
     );
     if (accepted == true) {
       final product = products.firstWhere((item) => item.id == selectedProductId);
-      final recommendation = restockRecommendations.where(
-        (item) => (item['product_id'] as num?)?.toInt() == selectedProductId,
-      ).firstOrNull;
+      Map<String, dynamic>? recommendation;
+      for (final item in restockRecommendations) {
+        if ((item['product_id'] as num?)?.toInt() == selectedProductId) {
+          recommendation = item;
+          break;
+        }
+      }
       final recommendedQty = recommendation == null
           ? null
           : _recommendationNumber(recommendation['suggested_quantity']);
