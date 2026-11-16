@@ -214,7 +214,7 @@ def capture_daily_availability(shop_id: int, snapshot_date: date | None = None,
     products = db.query(Product).filter(
         Product.shop_id == shop_id, Product.is_active.is_(True)
     ).all()
-    saleable = _saleable_subquery(db, shop_id)
+    saleable = _saleable_subquery(db, shop_id, as_of_date=day)
     captured = 0
     for product in products:
         qty = db.query(saleable.c.saleable_stock).filter(
