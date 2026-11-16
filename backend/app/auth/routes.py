@@ -487,17 +487,24 @@ def require_shop_membership(*allowed_membership_roles: str):
             )
 
         # Enforce employee job profiles centrally for every endpoint using
-        # require_shop_staff. Owner-only endpoints remain protected separately.
+        # require_shop_staff. Match complete route families and HTTP methods:
+        # substring checks can accidentally deny exact routes (e.g. /products)
+        # or grant access to unrelated routes containing the same text.
         if membership_role == "employee" and "employee" in allowed:
             path = request.url.path.lower()
             method = request.method.upper()
             job_role = (membership.job_role or "manager").lower()
 
+            is_product_lookup = path == "/products" or path.startswith("/products/")
+            is_inventory_lookup = path.startswith("/inventory/")
+            is_shop_inventory = path.startswith("/shops/") and "/inventory/" in path
+            is_shop_sales = path.startswith("/shops/") and path.endswith("/sales")
+
             if job_role == "cashier":
-                is_sales = path.endswith("/sales") and method in {"GET", "POST"}
+                is_sales = (path == "/sales" or is_shop_sales) and method in {"GET", "POST"}
                 is_read_only_lookup = (
                     method == "GET"
-                    and ("/products" in path or "/inventory" in path)
+                    and (is_product_lookup or is_inventory_lookup or is_shop_inventory)
                 )
                 if not (is_sales or is_read_only_lookup):
                     raise HTTPException(
@@ -506,18 +513,51 @@ def require_shop_membership(*allowed_membership_roles: str):
                     )
 
             elif job_role == "stock_manager":
-                allowed_stock_paths = (
-                    "/inventory/",
-                    "/products/",
-                    "/product-aliases",
-                    "/product-name-matches",
-                    "/sales",
-                    "/purchase-orders",
+                is_product_management = is_product_lookup and method in {"GET", "POST", "PUT"}
+                is_inventory_management = (
+                    (is_inventory_lookup or is_shop_inventory)
+                    and method in {"GET", "POST"}
                 )
-                if not any(item in path for item in allowed_stock_paths):
+                is_batch_management = (
+                    path == "/product-batches"
+                    or path.startswith("/product-batches/")
+                ) and method == "POST"
+                is_opening_batch = (
+                    path.startswith("/shops/")
+                    and "/products/" in path
+                    and path.endswith("/opening-batch")
+                    and method == "POST"
+                )
+                is_product_intelligence = (
+                    path.startswith("/shops/")
+                    and ("/product-aliases" in path or path.endswith("/product-name-matches"))
+                    and method in {"GET", "POST"}
+                )
+                is_sales = (path == "/sales" or is_shop_sales) and method in {"GET", "POST"}
+                is_purchase_order_visibility = (
+                    path.startswith("/shops/")
+                    and path.endswith("/purchase-orders")
+                    and method == "GET"
+                )
+                is_goods_receipt = (
+                    path.startswith("/shops/")
+                    and "/purchases/" in path
+                    and path.endswith("/receive")
+                    and method == "POST"
+                )
+                if not any((
+                    is_product_management,
+                    is_inventory_management,
+                    is_batch_management,
+                    is_opening_batch,
+                    is_product_intelligence,
+                    is_sales,
+                    is_purchase_order_visibility,
+                    is_goods_receipt,
+                )):
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Stock manager access is limited to inventory, products, sales and purchase-order visibility",
+                        detail="Stock manager access is limited to inventory, products, sales, goods receipt and purchase-order visibility",
                     )
 
         return membership

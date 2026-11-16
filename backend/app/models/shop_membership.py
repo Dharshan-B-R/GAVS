@@ -18,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     UniqueConstraint,
+    CheckConstraint,
 )
 from sqlalchemy.sql import func
 
@@ -33,6 +34,7 @@ class ShopMembership(Base):
             "shop_id",
             name="uq_shop_membership_user_shop",
         ),
+        CheckConstraint("job_role IN ('manager', 'cashier', 'stock_manager')", name="ck_shop_membership_job_role"),
     )
 
     id = Column(Integer, primary_key=True, index=True)

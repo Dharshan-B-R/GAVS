@@ -1,30 +1,76 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
 import 'package:mobile_app/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const KiranaAIApp());
+  group('KiranaAI Login Screen', () {
+    Future<void> openLoginScreen(
+      WidgetTester tester, {
+      String? error,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LoginScreen(
+            onLogin: () {},
+            initialError: error,
+          ),
+        ),
+      );
+    }
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    testWidgets('displays KiranaAI login screen', (tester) async {
+      await openLoginScreen(tester);
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+      expect(find.text('KiranaAI'), findsOneWidget);
+      expect(find.text('Sign in to manage your shop'), findsOneWidget);
+      expect(find.text('Email'), findsOneWidget);
+      expect(find.text('Password'), findsOneWidget);
+      expect(find.text('Sign in'), findsOneWidget);
+      expect(find.text('Create an Owner or Supplier account'), findsOneWidget);
+      expect(find.text('Join a shop with an employee invitation'), findsOneWidget);
+    });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    testWidgets('validates empty email and password', (tester) async {
+      await openLoginScreen(tester);
+
+      await tester.tap(find.text('Sign in'));
+      await tester.pump();
+
+      expect(find.text('Enter a valid email'), findsOneWidget);
+      expect(find.text('Enter your password'), findsOneWidget);
+    });
+
+    testWidgets('rejects invalid email format', (tester) async {
+      await openLoginScreen(tester);
+
+      await tester.enterText(find.byType(TextFormField).at(0), 'invalid-email');
+      await tester.enterText(find.byType(TextFormField).at(1), 'password123');
+
+      await tester.tap(find.text('Sign in'));
+      await tester.pump();
+
+      expect(find.text('Enter a valid email'), findsOneWidget);
+    });
+
+    testWidgets('toggles password visibility', (tester) async {
+      await openLoginScreen(tester);
+
+      expect(find.byIcon(Icons.visibility), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.visibility));
+      await tester.pump();
+
+      expect(find.byIcon(Icons.visibility_off), findsOneWidget);
+    });
+
+    testWidgets('displays authentication error', (tester) async {
+      await openLoginScreen(
+        tester,
+        error: 'Invalid email or password',
+      );
+
+      expect(find.text('Invalid email or password'), findsOneWidget);
+    });
   });
 }
