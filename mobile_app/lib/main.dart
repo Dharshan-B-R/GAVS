@@ -2976,6 +2976,24 @@ if (showMessage) {
     }
   }
 
+
+  Future<void> _assignLegacyCustomer() async {
+    final customerId = int.tryParse(_legacyCustomerIdController.text.trim());
+    if (customerId == null || customerId <= 0) {
+      showSnackBar('Enter a valid legacy customer ID.', isError: true);
+      return;
+    }
+    try {
+      await ApiService.assignLegacyCustomerToShop(customerId);
+      _legacyCustomerIdController.clear();
+      await _loadIntelligenceContext();
+      await _loadPhase2Intelligence();
+      if (mounted) showSnackBar('Legacy customer assigned to this shop.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not assign customer: $error', isError: true);
+    }
+  }
+
   Future<void> _createKhataCustomer() async {
     final name = TextEditingController();
     final phone = TextEditingController();
@@ -3376,6 +3394,26 @@ if (showMessage) {
                   ),
                 );
               }),
+              if (widget.userRole == 'owner') ...[
+                const Divider(),
+                const Text('Assign an existing legacy customer'),
+                const SizedBox(height: 6),
+                Row(children: [
+                  Expanded(child: TextField(
+                    controller: _legacyCustomerIdController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Legacy customer ID',
+                      border: OutlineInputBorder(),
+                    ),
+                  )),
+                  const SizedBox(width: 8),
+                  FilledButton.tonal(
+                    onPressed: _assignLegacyCustomer,
+                    child: const Text('Assign'),
+                  ),
+                ]),
+              ],
             ],
           ))),
           const SizedBox(height: 16),
