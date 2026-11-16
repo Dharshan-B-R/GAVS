@@ -15,6 +15,7 @@ from app.models.product import Product
 from app.models.shop import Shop
 from app.models.user import User
 from app.services.inventory_intelligence_service import _saleable_subquery
+from app.services.event_demand_service import analyze_event_demand
 
 router = APIRouter(tags=["KiranaAI Intelligence Data"])
 
@@ -221,3 +222,66 @@ def capture_daily_availability(shop_id: int, snapshot_date: date | None = None,
     db.commit()
     return {"shop_id": shop_id, "snapshot_date": day, "products_captured": captured,
             "message": "Saleable batch availability recorded for this date."}
+
+
+@router.put("/shops/{shop_id}/customers/{customer_id}/assign")
+def assign_legacy_customer_to_shop(shop_id: int, customer_id: int,
+                                   membership=Depends(require_shop_owner),
+                                   db: Session = Depends(get_db)):
+    """Explicitly assign an unowned legacy customer and its existing khata history."""
+    customer = db.query(Customer).filter(Customer.id == customer_id).with_for_update().first()
+    if customer is None:
+        raise HTTPException(404, "Customer not found")
+    if customer.shop_id == shop_id:
+        return {"customer_id": customer_id, "shop_id": shop_id, "message": "Customer is already assigned to this shop."}
+    if customer.shop_id is not None:
+        raise HTTPException(409, "Customer already belongs to another shop and cannot be reassigned through this endpoint.")
+    customer.shop_id = shop_id
+    db.commit()
+    return {"customer_id": customer_id, "shop_id": shop_id,
+            "message": "Legacy customer and their khata history are now attributed to this shop by owner action."}
+
+
+@router.get("/shops/{shop_id}/agents/event-demand/{event_id}")
+def compare_saved_festival_event(shop_id: int, event_id: int,
+                                 window_days: int = Query(7, ge=1, le=30),
+                                 baseline_days: int = Query(56, ge=28, le=180),
+                                 limit: int = Query(50, ge=1, le=100),
+                                 membership=Depends(require_shop_staff),
+                                 db: Session = Depends(get_db)):
+    event = db.query(FestivalEvent).filter(
+        FestivalEvent.id == event_id, FestivalEvent.shop_id == shop_id,
+        FestivalEvent.is_active.is_(True),
+    ).first()
+    if event is None:
+        raise HTTPException(404, "Active festival event not found")
+    try:
+        return analyze_event_demand(
+            db, shop_id, event.name, event.event_date,
+            window_days=window_days, baseline_days=baseline_days, limit=limit,
+        )
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+
+
+@router.get("/shops/{shop_id}/availability-snapshots")
+def list_availability_snapshot_coverage(shop_id: int,
+                                        start_date: date | None = None,
+                                        end_date: date | None = None,
+                                        membership=Depends(require_shop_staff),
+                                        db: Session = Depends(get_db)):
+    query = db.query(InventoryAvailabilitySnapshot).filter(
+        InventoryAvailabilitySnapshot.shop_id == shop_id
+    )
+    if start_date:
+        query = query.filter(InventoryAvailabilitySnapshot.snapshot_date >= start_date)
+    if end_date:
+        query = query.filter(InventoryAvailabilitySnapshot.snapshot_date <= end_date)
+    rows = query.order_by(InventoryAvailabilitySnapshot.snapshot_date.desc()).limit(1000).all()
+    days = {}
+    for row in rows:
+        item = days.setdefault(str(row.snapshot_date), {"product_count": 0, "available_count": 0, "out_of_stock_count": 0})
+        item["product_count"] += 1
+        item["available_count"] += int(row.is_available)
+        item["out_of_stock_count"] += int(not row.is_available)
+    return {"shop_id": shop_id, "days": [{"date": day, **value} for day, value in sorted(days.items(), reverse=True)]}
