@@ -375,6 +375,8 @@ def execute_approved_purchase_order(
             purchase_id=purchase.id,
             product_id=product_id,
             quantity=float(item["quantity"]),
+            ordered_quantity=float(item["quantity"]),
+            received_quantity=0,
             unit_price=float(item["unit_price"]),
             subtotal=float(item["subtotal"]),
         ))
@@ -468,7 +470,12 @@ def receive_approved_purchase_order(
         order_item.batch_id = batch.id
 
     purchase.status = "received"
-    purchase.purchase_date = datetime.now(timezone.utc)
+    purchase.received_at = datetime.now(timezone.utc)
+    purchase.purchase_date = purchase.received_at
+    for order_item in order_items:
+        order_item.received_quantity = float(order_item.quantity)
+        if order_item.ordered_quantity is None:
+            order_item.ordered_quantity = float(order_item.quantity)
     db.commit()
     return {
         "purchase_id": purchase.id,
