@@ -39,6 +39,8 @@ from app.models.user import User
 from app.models.shop_purchase_budget import ShopPurchaseBudget
 from app.models.purchase_proposal import PurchaseProposal
 from app.models.product_alias import ProductAlias
+from app.models.festival_event import FestivalEvent
+from app.models.inventory_availability_snapshot import InventoryAvailabilitySnapshot
 
 
 # Alembic configuration object.
