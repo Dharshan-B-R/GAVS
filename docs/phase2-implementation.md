@@ -20,6 +20,9 @@ Phase 2 intelligence is implemented incrementally on the dedicated `phase2-intel
 | Supplier Issues | Shop-scoped issue reporting, severity and resolution tracking | `/shops/{shop_id}/supplier-issues` | Issue rate is only calculated from issues linked to eligible purchase orders |
 | Financial Position | Shop-scoped khata receivables and supplier payables | `GET /shops/{shop_id}/agents/financial-position` | Legacy customers remain excluded until an owner explicitly assigns them |
 | Agent Orchestration | Specialist routing, saved event comparisons, evidence and partial-result reporting | `POST /shops/{shop_id}/agents/orchestrate` | Read-only; staff/owner restrictions retained |
+| Daily Intelligence Digest | Daily expiry, stockout, dead-stock and reorder snapshot persisted per shop/day | `/shops/{shop_id}/intelligence-daily-summaries` | Deterministic recorded-data summary; cron command included |
+| Actionable Alerts | Deduplicated expiry, stockout and dead-stock alerts with acknowledgement | `/shops/{shop_id}/intelligence-alerts` | Alerts inform staff; they do not trigger purchases |
+| Recommendation Feedback | Accepted, dismissed or adjusted reorder feedback stored with quantities and notes | `/shops/{shop_id}/recommendation-feedback` | Feedback is recorded for later analysis; it does not train or alter forecast weights automatically |
 | Flutter Intelligence | Dedicated Intelligence tab for snapshots, local calendar, khata ledger, supplier issues and specialist results | Mobile app | Owner-only configuration actions remain gated in UI and API |
 
 ## Data foundation added in this branch
@@ -32,6 +35,7 @@ Phase 2 intelligence is implemented incrementally on the dedicated `phase2-intel
 - `festival_events` stores shop-specific festivals, local events, promotions and market days.
 - `inventory_availability_snapshots` stores saleable quantity and availability per product per date.
 - `supplier_issues` stores shop-scoped supplier issues, optional purchase linkage, severity and resolution state.
+- `intelligence_alerts`, `intelligence_daily_summaries` and `recommendation_feedback` persist daily decision support and user feedback.
 
 ## Remaining operational requirements
 
@@ -40,9 +44,10 @@ Phase 2 intelligence is implemented incrementally on the dedicated `phase2-intel
 3. **Supplier issue linkage:** Staff should attach a purchase ID when reporting a supplier issue; unlinked issues are counted but do not inflate the per-order issue rate.
 4. **Khata legacy mapping:** Owners must map old customer IDs to the correct shop. Unassigned legacy customers are intentionally excluded from shop financial totals.
 5. **Accounting precision:** Khata ageing is based on oldest transaction, not contractual due dates. Cash balance, UPI/bank settlement and supplier invoice due dates need separate ledger data before cash-flow forecasting can be claimed.
-6. **Supplier evidence coverage:** Old purchases without promised dates or actual receipt timestamps do not contribute to on-time delivery rate. Future orders must have expected dates entered and receipt workflow completed.
-7. **Festival model quality:** Event comparisons require completed event windows and sufficient pre-event baseline history. Promotions, weather, stock availability and price effects are not causally separated yet.
-8. **Consolidated verification:** Run backend tests, Flutter analysis/build, migration review on a database copy, API permission checks and realistic-data validation only after explicit approval to test.
+6. **Supplier evidence coverage:** Old purchases without promised dates or actual receipt timestamps do not contribute to on-time delivery rate. Future orders must have expected dates entered and receipt workflow completed. Invoice totals are captured at receipt; internal PO estimates are excluded from payables until then.
+7. **Feedback loop:** Recommendation decisions are persisted, but are not yet used to automatically retrain or change ranking weights. Review feedback before introducing adaptive behavior.
+8. **Festival model quality:** Event comparisons require completed event windows and sufficient pre-event baseline history. Promotions, weather, stock availability and price effects are not causally separated yet.
+9. **Consolidated verification:** Run backend tests, Flutter analysis/build, migration review on a database copy, API permission checks and realistic-data validation only after explicit approval to test.
 
 ## API and safety rules
 
@@ -55,4 +60,4 @@ Phase 2 intelligence is implemented incrementally on the dedicated `phase2-intel
 
 ## Validation status
 
-**Testing is intentionally not run.** No test suite, Flutter analysis/build, migration execution, CI workflow or production data operation has been executed for this branch. The new Alembic revisions must be reviewed and applied to a disposable/staging database before production rollout. A code commit is not proof of runtime or production readiness.
+**Testing is intentionally not run.** No test suite, Flutter analysis/build, migration execution, CI workflow or production data operation has been executed for this branch. The new Alembic revisions must be reviewed and applied to a disposable/staging database before production rollout. The daily job must be configured in the deployment scheduler after migration. A code commit is not proof of runtime or production readiness.
