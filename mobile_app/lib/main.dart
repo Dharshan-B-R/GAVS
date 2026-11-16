@@ -495,6 +495,9 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   bool _intelligenceLoading = false;
   String? _intelligenceError;
   Map<String, dynamic> _intelligenceSnapshot = {};
+  List<dynamic> _festivalEvents = [];
+  Map<String, dynamic> _availabilityCoverage = {};
+  bool _availabilityCapturing = false;
   final List<Map<String, String>> _aiMessages = [
     {'role': 'assistant', 'text': 'Ask about low stock, expiry, dead stock, sales trends, forecasts or reorder recommendations.'},
   ];
@@ -2832,6 +2835,121 @@ if (showMessage) {
   }
 
 
+
+  Future<void> _loadIntelligenceContext() async {
+    try {
+      final values = await Future.wait([
+        ApiService.getFestivalCalendar(),
+        ApiService.getAvailabilitySnapshotCoverage(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _festivalEvents = values[0] as List<dynamic>;
+        _availabilityCoverage = values[1] as Map<String, dynamic>;
+      });
+    } catch (_) {
+      // The primary intelligence response remains usable if optional context
+      // endpoints are temporarily unavailable.
+    }
+  }
+
+  Future<void> _captureAvailabilitySnapshot() async {
+    if (_availabilityCapturing) return;
+    setState(() => _availabilityCapturing = true);
+    try {
+      final result = await ApiService.captureDailyAvailability();
+      await _loadIntelligenceContext();
+      if (mounted) showSnackBar(result['message']?.toString() ?? 'Availability snapshot saved.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not capture availability: $error', isError: true);
+    } finally {
+      if (mounted) setState(() => _availabilityCapturing = false);
+    }
+  }
+
+  Future<void> _addFestivalEvent() async {
+    final nameController = TextEditingController();
+    DateTime selectedDate = DateTime.now();
+    String eventType = 'festival';
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(builder: (context, updateDialog) =>
+        AlertDialog(
+          title: const Text('Add local festival or event'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: nameController,
+              decoration: const InputDecoration(labelText: 'Event name')),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: eventType,
+              decoration: const InputDecoration(labelText: 'Event type'),
+              items: const [
+                DropdownMenuItem(value: 'festival', child: Text('Festival')),
+                DropdownMenuItem(value: 'local_event', child: Text('Local event')),
+                DropdownMenuItem(value: 'promotion', child: Text('Promotion')),
+                DropdownMenuItem(value: 'market_day', child: Text('Market day')),
+              ],
+              onChanged: (value) { if (value != null) updateDialog(() => eventType = value); },
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.calendar_month),
+              label: Text('Date: ${selectedDate.toIso8601String().split('T').first}'),
+              onPressed: () async {
+                final picked = await showDatePicker(
+                  context: dialogContext,
+                  initialDate: selectedDate,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime(2040),
+                );
+                if (picked != null) updateDialog(() => selectedDate = picked);
+              },
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save event')),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true && nameController.text.trim().isNotEmpty) {
+      try {
+        await ApiService.addFestivalEvent(
+          name: nameController.text.trim(),
+          eventDate: selectedDate.toIso8601String().split('T').first,
+          eventType: eventType,
+        );
+        await _loadIntelligenceContext();
+        if (mounted) showSnackBar('Local event saved to the shop calendar.');
+      } catch (error) {
+        if (mounted) showSnackBar('Could not save event: $error', isError: true);
+      }
+    }
+    nameController.dispose();
+  }
+
+  Future<void> _compareFestivalEvent(Map<String, dynamic> event) async {
+    final eventId = (event['event_id'] as num?)?.toInt();
+    if (eventId == null) return;
+    try {
+      final result = await ApiService.compareSavedFestivalEvent(eventId);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('${event['name']} demand comparison'),
+          content: SizedBox(width: 520, child: SingleChildScrollView(
+            child: SelectableText(const JsonEncoder.withIndent('  ').convert(result)),
+          )),
+          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))],
+        ),
+      );
+    } catch (error) {
+      if (mounted) showSnackBar('Event comparison unavailable: $error', isError: true);
+    }
+  }
+
   Future<void> _loadPhase2Intelligence({bool showMessage = false}) async {
     if (_intelligenceLoading) return;
     setState(() {
@@ -2845,6 +2963,7 @@ if (showMessage) {
         _intelligenceSnapshot = result;
         _intelligenceLoading = false;
       });
+      await _loadIntelligenceContext();
       if (showMessage) showSnackBar('Intelligence refreshed.');
     } catch (error) {
       if (!mounted) return;
@@ -2916,6 +3035,55 @@ if (showMessage) {
               const Text('Some specialists need more event parameters or recorded evidence.',
                 style: TextStyle(color: Colors.orange)),
           ],
+
+          const SizedBox(height: 16),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Availability evidence',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              const Text('Capture today’s saleable batch stock. Repeated daily snapshots help the forecast distinguish low sales from stockout days.'),
+              const SizedBox(height: 10),
+              FilledButton.tonalIcon(
+                onPressed: _availabilityCapturing ? null : _captureDailyAvailability,
+                icon: const Icon(Icons.camera_alt_outlined),
+                label: Text(_availabilityCapturing ? 'Capturing…' : 'Capture today’s availability'),
+              ),
+              if ((_availabilityCoverage['days'] as List?)?.isNotEmpty == true)
+                Text('${(_availabilityCoverage['days'] as List).length} recorded snapshot dates'),
+            ],
+          ))),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Local festival calendar',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              const Text('Add local events for later comparison with your shop’s recorded sales.'),
+              Align(alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _addFestivalEvent,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add event'),
+                )),
+              if (_festivalEvents.isEmpty)
+                const Text('No local events saved yet.'),
+              ..._festivalEvents.take(8).map((raw) {
+                final event = raw as Map<String, dynamic>;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(event['name']?.toString() ?? 'Event'),
+                  subtitle: Text('${event['event_date'] ?? ''} · ${event['event_type'] ?? 'festival'}'),
+                  trailing: IconButton(
+                    tooltip: 'Compare recorded demand',
+                    icon: const Icon(Icons.query_stats),
+                    onPressed: () => _compareFestivalEvent(event),
+                  ),
+                );
+              }),
+            ],
+          ))),
           if (specialistResults.isNotEmpty) ...[
             const SizedBox(height: 8),
             ...specialistResults.entries.map((entry) => _intelligenceResultCard(entry.key, entry.value)),
