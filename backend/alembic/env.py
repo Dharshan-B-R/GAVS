@@ -42,6 +42,9 @@ from app.models.product_alias import ProductAlias
 from app.models.festival_event import FestivalEvent
 from app.models.inventory_availability_snapshot import InventoryAvailabilitySnapshot
 from app.models.supplier_issue import SupplierIssue
+from app.models.intelligence_alert import IntelligenceAlert
+from app.models.intelligence_daily_summary import IntelligenceDailySummary
+from app.models.recommendation_feedback import RecommendationFeedback
 
 
 # Alembic configuration object.
