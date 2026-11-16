@@ -1014,16 +1014,10 @@ if (showMessage) {
   Widget build(BuildContext context) {
 
     final pages = [
-      buildDashboard(),
-      buildInventory(),
-      buildSales(),
-      buildPurchasing(),
-      buildAiAssistant(),
-      buildIntelligence(),
-      buildSettings(),
+      buildDashboard(), buildInventory(), buildSales(), buildPurchasing(),
+      buildAiAssistant(), buildCustomers(), buildSupplierIssues(), buildReports(),
+      buildIntelligence(), buildMore(), buildSettings(),
     ];
-
-
 
     return Scaffold(
 
@@ -1034,48 +1028,37 @@ if (showMessage) {
       ),
 
       bottomNavigationBar: NavigationBar(
-
-        selectedIndex: selectedIndex,
-
+        selectedIndex: selectedIndex <= 3 ? selectedIndex : 4,
         onDestinationSelected: (index) {
-
-          setState(() {
-
-            selectedIndex = index;
-
-          });
-
-
-
-          if (index == 1) {
+          final pageIndex = index == 4 ? 9 : index;
+          setState(() => selectedIndex = pageIndex);
+          if (pageIndex == 1) {
             loadBackendData();
-          } else if (index == 2) {
+          } else if (pageIndex == 2) {
             _loadSalesHistory();
-          } else if (index == 3) {
+          } else if (pageIndex == 3) {
             loadBackendData();
             loadRestockRecommendations();
-          } else if (index == 5) {
-            _loadPhase2Intelligence();
-          } else if (index == 6 && widget.userRole == 'owner') {
-            _loadEmployees();
+            _loadPurchasePlanningData();
+          } else if (pageIndex == 9) {
+            _loadIntelligenceContext();
           }
-
         },
-
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
           NavigationDestination(icon: Icon(Icons.inventory_2_outlined), selectedIcon: Icon(Icons.inventory_2), label: 'Inventory'),
           NavigationDestination(icon: Icon(Icons.point_of_sale_outlined), selectedIcon: Icon(Icons.point_of_sale), label: 'Sales'),
           NavigationDestination(icon: Icon(Icons.shopping_cart_outlined), selectedIcon: Icon(Icons.shopping_cart), label: 'Purchasing'),
-          NavigationDestination(icon: Icon(Icons.auto_awesome_outlined), selectedIcon: Icon(Icons.auto_awesome), label: 'AI Assistant'),
-          NavigationDestination(icon: Icon(Icons.insights_outlined), selectedIcon: Icon(Icons.insights), label: 'Intelligence'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
+          NavigationDestination(icon: Icon(Icons.grid_view_outlined), selectedIcon: Icon(Icons.grid_view), label: 'More'),
         ],
       ),
 
       floatingActionButton: FloatingActionButton.extended(
 
-        onPressed: () => setState(() => selectedIndex = 4),
+        onPressed: () {
+          setState(() => selectedIndex = 4);
+          if (_intelligenceSnapshot.isEmpty) _loadPhase2Intelligence();
+        },
 
         backgroundColor: const Color(0xFF16845B),
 
@@ -1403,7 +1386,7 @@ if (showMessage) {
 
                     setState(() {
 
-                      selectedIndex = 2;
+                      selectedIndex = 3;
 
                     });
 
@@ -3806,6 +3789,51 @@ if (showMessage) {
     );
   }
 
+  Future<void> _askPresetQuestion(String question) async {
+    _aiQuestionController.text = question;
+    await _askInventoryAi();
+  }
+
+  String _humanizeIntelligenceKey(String key) {
+    final spaced = key.replaceAll('_', ' ').replaceAll('-', ' ');
+    return spaced.isEmpty ? key : spaced[0].toUpperCase() + spaced.substring(1);
+  }
+
+  String _friendlyAgentResponse(dynamic value) {
+    final lines = <String>[];
+    void visit(dynamic item, [String? heading]) {
+      if (item == null) return;
+      if (item is Map) {
+        for (final entry in item.entries) {
+          final key = entry.key.toString();
+          if (const {'debug', 'trace', 'raw', 'metadata', 'safety', 'evidence_summary'}.contains(key)) continue;
+          visit(entry.value, _humanizeIntelligenceKey(key));
+        }
+      } else if (item is List) {
+        if (item.isEmpty) {
+          if (heading != null) lines.add('$heading: Nothing needs attention right now.');
+        } else {
+          if (heading != null) lines.add('$heading:');
+          for (final child in item.take(8)) {
+            if (child is Map) {
+              final parts = child.entries.where((entry) => entry.value != null && entry.value is! Map && entry.value is! List)
+                .take(4).map((entry) => '${_humanizeIntelligenceKey(entry.key.toString())}: ${entry.value}').join(' · ');
+              if (parts.isNotEmpty) lines.add('• $parts');
+            } else {
+              lines.add('• $child');
+            }
+          }
+        }
+      } else if (heading != null) {
+        lines.add('$heading: $item');
+      }
+    }
+    visit(value);
+    return lines.isEmpty
+      ? 'I checked the available shop information. Try asking about expiry, low stock, slow-moving products or what to reorder.'
+      : lines.take(24).join('\n');
+  }
+
   Future<void> _askInventoryAi() async {
     final question = _aiQuestionController.text.trim();
     if (question.isEmpty || _aiLoading) return;
@@ -3816,7 +3844,7 @@ if (showMessage) {
     });
     try {
       final response = await ApiService.getInventoryAgentAnswer(question);
-      final resultText = const JsonEncoder.withIndent('  ').convert(response['results'] ?? response);
+      final resultText = _friendlyAgentResponse(response['results'] ?? response);
       if (mounted) setState(() {
         _aiMessages.add({'role': 'assistant', 'text': resultText});
         _aiLoading = false;
@@ -3920,6 +3948,16 @@ if (showMessage) {
     );
   }
 
+  Widget _assistantShortcut(String label, IconData icon, String question) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ActionChip(
+        avatar: Icon(icon, size: 18), label: Text(label),
+        onPressed: _aiLoading ? null : () => _askPresetQuestion(question),
+      ),
+    );
+  }
+
   Widget buildAiAssistant() {
     return Column(children: [
       const Padding(padding: EdgeInsets.fromLTRB(20, 20, 20, 8),
@@ -3927,7 +3965,20 @@ if (showMessage) {
           style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold)))),
       const Padding(padding: EdgeInsets.symmetric(horizontal: 20),
         child: Align(alignment: Alignment.centerLeft,
-          child: Text('Read-only inventory, sales and purchasing insights.'))),
+          child: Text('Ask in everyday words. Choose a shortcut or type your own question.'))),
+      SizedBox(height: 88, child: ListView(
+        scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 12),
+        children: [
+          _assistantShortcut('Expiry check', Icons.event_busy, 'Which products are expiring soon?'),
+          _assistantShortcut('Slow sellers', Icons.hourglass_bottom, 'Which products are not selling and may be dead stock?'),
+          _assistantShortcut('Low stock', Icons.inventory_2_outlined, 'Which products may run out soon?'),
+          _assistantShortcut('Sales forecast', Icons.trending_up, 'Forecast demand for my products.'),
+          _assistantShortcut('Festival demand', Icons.celebration, 'What products should I prepare for upcoming festivals?'),
+          _assistantShortcut('What to buy', Icons.shopping_cart_outlined, 'What should I reorder now and why?'),
+          _assistantShortcut('Suppliers', Icons.local_shipping_outlined, 'Compare my suppliers and show supplier issues.'),
+          _assistantShortcut('Money position', Icons.account_balance_wallet_outlined, 'Explain my shop financial position and purchase budget.'),
+        ],
+      )),
       Expanded(child: ListView.builder(
         padding: const EdgeInsets.all(16),
         itemCount: _aiMessages.length,
@@ -3966,6 +4017,143 @@ if (showMessage) {
         ]),
       )),
     ]);
+  }
+
+  Widget buildMore() {
+    final entries = <({String title, String subtitle, IconData icon, int page})>[
+      (title: 'AI Assistant', subtitle: 'Ask questions and use your shop agents', icon: Icons.auto_awesome, page: 4),
+      (title: 'Customer khata', subtitle: 'Customer balances, credit and repayments', icon: Icons.people_outline, page: 5),
+      (title: 'Supplier issues', subtitle: 'Report and resolve delivery or quality issues', icon: Icons.report_problem_outlined, page: 6),
+      (title: 'Reports', subtitle: 'Sales activity and stock position', icon: Icons.bar_chart, page: 7),
+      (title: 'Shop intelligence', subtitle: 'Detailed alerts, festivals and daily insights', icon: Icons.insights_outlined, page: 8),
+      (title: 'Settings', subtitle: 'Shop, staff and account settings', icon: Icons.settings_outlined, page: 10),
+    ];
+    return ListView(padding: const EdgeInsets.all(20), children: [
+      const Text('More', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+      const SizedBox(height: 6), const Text('All your shop tools in one place.'),
+      const SizedBox(height: 12),
+      ...entries.map((entry) => Card(child: ListTile(
+        leading: Icon(entry.icon, color: const Color(0xFF16845B)),
+        title: Text(entry.title), subtitle: Text(entry.subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () {
+          setState(() => selectedIndex = entry.page);
+          if (entry.page == 4 || entry.page == 8) _loadPhase2Intelligence();
+          if (entry.page == 5 || entry.page == 6) _loadIntelligenceContext();
+          if (entry.page == 7) { _loadSalesHistory(); loadBackendData(); }
+          if (entry.page == 10 && widget.userRole == 'owner') _loadEmployees();
+        },
+      ))),
+    ]);
+  }
+
+  Widget buildCustomers() {
+    return RefreshIndicator(
+      onRefresh: _loadIntelligenceContext,
+      child: ListView(padding: const EdgeInsets.all(20), children: [
+        const Text('Customer khata', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6), const Text('See who has a balance, record credit and add repayments.'),
+        const SizedBox(height: 12),
+        Align(alignment: Alignment.centerRight, child: FilledButton.icon(
+          onPressed: _createKhataCustomer, icon: const Icon(Icons.person_add_alt_1),
+          label: const Text('Add customer'))),
+        if (widget.userRole == 'owner') ExpansionTile(
+          title: const Text('Add an existing customer to this shop'),
+          children: [
+            TextField(controller: _legacyCustomerIdController, keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Existing customer number')),
+            Align(alignment: Alignment.centerRight, child: TextButton(
+              onPressed: _assignLegacyCustomer, child: const Text('Add to shop'))),
+          ],
+        ),
+        if (_shopCustomers.isEmpty) const Card(child: Padding(
+          padding: EdgeInsets.all(18), child: Text('No customers yet. Add your first customer to start a khata.'))),
+        ..._shopCustomers.map((raw) {
+          final customer = raw as Map<String, dynamic>;
+          final id = (customer['customer_id'] as num).toInt();
+          return Card(child: ListTile(
+            leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+            title: Text(customer['name']?.toString() ?? 'Customer'),
+            subtitle: Text(customer['phone']?.toString() ?? 'Phone not added'),
+            trailing: const Icon(Icons.receipt_long_outlined),
+            onTap: () => _openKhataLedger(id),
+          ));
+        }),
+      ]),
+    );
+  }
+
+  Widget buildSupplierIssues() {
+    return RefreshIndicator(
+      onRefresh: _loadIntelligenceContext,
+      child: ListView(padding: const EdgeInsets.all(20), children: [
+        const Text('Supplier issues', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
+        const Text('Keep track of late deliveries, missing goods, quality and invoice problems.'),
+        const SizedBox(height: 12),
+        Align(alignment: Alignment.centerRight, child: FilledButton.icon(
+          onPressed: _reportSupplierIssue, icon: const Icon(Icons.add), label: const Text('Report an issue'))),
+        if (_supplierIssues.isEmpty) const Card(child: Padding(
+          padding: EdgeInsets.all(18), child: Text('No open supplier issues.'))),
+        ..._supplierIssues.map((raw) {
+          final issue = raw as Map<String, dynamic>;
+          final id = (issue['issue_id'] as num).toInt();
+          return Card(child: ListTile(
+            leading: const Icon(Icons.report_problem_outlined, color: Colors.orange),
+            title: Text(issue['issue_type']?.toString() ?? 'Supplier issue'),
+            subtitle: Text('${issue['severity'] ?? 'Normal'} · ${issue['description'] ?? ''}'),
+            isThreeLine: true,
+            trailing: IconButton(tooltip: 'Mark as resolved',
+              icon: const Icon(Icons.check_circle_outline), onPressed: () => _resolveSupplierIssue(id)),
+          ));
+        }),
+      ]),
+    );
+  }
+
+  Widget buildReports() {
+    final totalSales = _salesHistory.fold<double>(0, (sum, raw) {
+      final sale = raw as Map<String, dynamic>;
+      return sum + ((sale['total_amount'] as num?)?.toDouble() ?? 0);
+    });
+    return RefreshIndicator(
+      onRefresh: () async { await loadBackendData(); await _loadSalesHistory(); },
+      child: ListView(padding: const EdgeInsets.all(20), children: [
+        const Text('Reports', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6), const Text('A simple view of recorded sales and current stock. Pull down to refresh.'),
+        const SizedBox(height: 16),
+        Row(children: [
+          Expanded(child: statCard('Products', '${products.length}', Icons.inventory_2, Colors.blue)),
+          const SizedBox(width: 10),
+          Expanded(child: statCard('Low stock', '${products.where((p) => p.quantity <= p.minimumStock).length}', Icons.warning_amber, Colors.orange)),
+        ]),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: statCard('Bills loaded', '${_salesHistory.length}', Icons.receipt_long, const Color(0xFF16845B))),
+          const SizedBox(width: 10),
+          Expanded(child: statCard('Sales total', '₹${totalSales.toStringAsFixed(2)}', Icons.currency_rupee, Colors.deepPurple)),
+        ]),
+        const SizedBox(height: 20), const Text('Recent sales', style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
+        if (_salesLoading) const LinearProgressIndicator(),
+        if (_salesHistory.isEmpty && !_salesLoading) const Padding(
+          padding: EdgeInsets.symmetric(vertical: 16), child: Text('No sales have been recorded yet.')),
+        ..._salesHistory.take(30).map((raw) {
+          final sale = raw as Map<String, dynamic>;
+          final items = sale['items'] as List<dynamic>? ?? [];
+          final amount = (sale['total_amount'] as num?)?.toDouble() ?? 0;
+          return Card(child: ListTile(
+            leading: const Icon(Icons.receipt_long), title: Text('₹${amount.toStringAsFixed(2)}'),
+            subtitle: Text('${items.length} item lines · ${sale['payment_method'] ?? 'Payment not recorded'}'),
+            trailing: Text('#${sale['sale_id'] ?? ''}'),
+          ));
+        }),
+        const SizedBox(height: 16), const Text('Stock position', style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
+        ...products.take(30).map((product) => ListTile(
+          contentPadding: EdgeInsets.zero, title: Text(product.name), subtitle: Text(product.category),
+          trailing: Text('${product.quantity} ${product.unit}'),
+        )),
+      ]),
+    );
   }
 
   /// Displays application settings and the live backend connection status.
