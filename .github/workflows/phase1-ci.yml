@@ -2,7 +2,7 @@ name: KiranaAI Phase 1 CI
 
 on:
   push:
-    branches: [main, phase2-intelligence-completion]
+    branches: [main, phase2-intelligence-completion, phase2-permission-migration-hardening]
   pull_request:
     branches: [main, phase2-intelligence-completion]
 
