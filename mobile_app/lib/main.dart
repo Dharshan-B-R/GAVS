@@ -4215,6 +4215,7 @@ class ReceivePurchaseDialog extends StatefulWidget {
 
 class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
   final Map<int, TextEditingController> _batchControllers = {};
+  final Map<int, TextEditingController> _quantityControllers = {};
   final Map<int, DateTime> _expiryDates = {};
 
   @override
@@ -4223,12 +4224,17 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
     for (final item in widget.items) {
       final id = (item['purchase_item_id'] as num).toInt();
       _batchControllers[id] = TextEditingController();
+      final ordered = item['ordered_quantity'] ?? item['quantity'] ?? 0;
+      _quantityControllers[id] = TextEditingController(text: ordered.toString());
     }
   }
 
   @override
   void dispose() {
     for (final controller in _batchControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _quantityControllers.values) {
       controller.dispose();
     }
     super.dispose();
@@ -4247,9 +4253,11 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
       final id = (item['purchase_item_id'] as num).toInt();
       final batch = _batchControllers[id]!.text.trim();
       final expiry = _expiryDates[id];
-      if (batch.isEmpty || expiry == null) {
+      final received = double.tryParse(_quantityControllers[id]!.text.trim());
+      final ordered = double.tryParse((item['ordered_quantity'] ?? item['quantity'] ?? 0).toString()) ?? 0;
+      if (batch.isEmpty || expiry == null || received == null || received <= 0 || received > ordered) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Enter a batch number and expiry date for every line.')),
+          const SnackBar(content: Text('Enter a batch, expiry date and valid received quantity (not above ordered quantity) for every line.')),
         );
         return;
       }
@@ -4257,6 +4265,7 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
         'purchase_item_id': id,
         'batch_number': batch,
         'expiry_date': expiry.toIso8601String().substring(0, 10),
+        'received_quantity': received,
       });
     }
     Navigator.of(context).pop(result);
@@ -4282,7 +4291,12 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
                   children: [
                     Text(_productName(productId),
                       style: const TextStyle(fontWeight: FontWeight.bold)),
-                    Text('Ordered quantity: ${item['quantity']}'),
+                    Text('Ordered quantity: ${item['ordered_quantity'] ?? item['quantity']}'),
+                    TextField(
+                      controller: _quantityControllers[itemId],
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Actually received quantity'),
+                    ),
                     TextField(
                       controller: _batchControllers[itemId],
                       decoration: const InputDecoration(labelText: 'Batch number'),
