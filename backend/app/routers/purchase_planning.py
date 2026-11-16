@@ -53,9 +53,9 @@ class ProposalDecision(BaseModel):
 
 class PurchaseReceiptItem(BaseModel):
     purchase_item_id: int = Field(gt=0)
-    batch_number: str = Field(min_length=1, max_length=100)
-    expiry_date: date
-    received_quantity: Optional[Decimal] = Field(default=None, gt=0, max_digits=14, decimal_places=3)
+    batch_number: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    expiry_date: Optional[date] = None
+    received_quantity: Optional[Decimal] = Field(default=None, ge=0, max_digits=14, decimal_places=3)
 
 
 class PurchaseReceiptCreate(BaseModel):
@@ -438,10 +438,6 @@ def receive_approved_purchase_order(
     today = date.today()
     for order_item in order_items:
         receipt = submitted[order_item.id]
-        if receipt.expiry_date < today:
-            raise HTTPException(400, f"Batch for purchase item {order_item.id} is already expired")
-        if order_item.batch_id is not None:
-            raise HTTPException(409, f"Purchase item {order_item.id} already has a received batch")
         product = db.query(Product).filter(
             Product.id == order_item.product_id,
             Product.shop_id == shop_id,
@@ -452,8 +448,19 @@ def receive_approved_purchase_order(
         before = float(product.quantity or 0)
         ordered_quantity = float(order_item.ordered_quantity if order_item.ordered_quantity is not None else order_item.quantity)
         received_quantity = float(receipt.received_quantity) if receipt.received_quantity is not None else ordered_quantity
-        if received_quantity > ordered_quantity + 0.000001:
-            raise HTTPException(400, f"Received quantity for purchase item {order_item.id} cannot exceed ordered quantity")
+        if received_quantity > ordered_quantity + 0.000001 or received_quantity < 0:
+            raise HTTPException(400, f"Received quantity for purchase item {order_item.id} must be between zero and ordered quantity")
+        if received_quantity == 0:
+            order_item.received_quantity = 0
+            if order_item.ordered_quantity is None:
+                order_item.ordered_quantity = ordered_quantity
+            continue
+        if order_item.batch_id is not None:
+            raise HTTPException(409, f"Purchase item {order_item.id} already has a received batch")
+        if not receipt.batch_number or receipt.expiry_date is None:
+            raise HTTPException(400, f"Batch number and expiry date are required for received purchase item {order_item.id}")
+        if receipt.expiry_date < today:
+            raise HTTPException(400, f"Batch for purchase item {order_item.id} is already expired")
         batch = ProductBatch(
             product_id=product.id,
             batch_number=receipt.batch_number.strip(),
