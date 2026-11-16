@@ -793,4 +793,10 @@ class ApiService {
   }
 
 
+  static Future<Map<String, dynamic>> assignLegacyCustomerToShop(int customerId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PUT', '/shops/$shopId/customers/$customerId/assign');
+  }
+
+
 }
