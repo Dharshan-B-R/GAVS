@@ -4281,7 +4281,7 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
     final invoiceAmountText = _invoiceAmountController.text.trim();
     final invoiceAmount = double.tryParse(invoiceAmountText);
     if ((invoiceNumber.isEmpty) != invoiceAmountText.isEmpty ||
-        (invoiceAmountText.isNotEmpty && (invoiceAmount == null || invoiceAmount < 0))) {
+        (invoiceAmountText.isNotEmpty && (invoiceAmount == null || invoiceAmount <= 0))) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter both a valid invoice number and invoice amount, or leave both blank.')),
       );
