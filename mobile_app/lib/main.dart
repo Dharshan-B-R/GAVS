@@ -2306,13 +2306,18 @@ if (showMessage) {
 
   Future<void> _receivePurchaseOrder(Map<String, dynamic> order) async {
     final items = (order['items'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
-    final receipt = await showDialog<List<Map<String, dynamic>>>(
+    final receipt = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (dialogContext) => ReceivePurchaseDialog(items: items, products: products),
     );
     if (receipt == null) return;
     try {
-      await ApiService.receivePurchaseOrder((order['purchase_id'] as num).toInt(), receipt);
+      await ApiService.receivePurchaseOrder(
+        (order['purchase_id'] as num).toInt(),
+        (receipt['items'] as List<dynamic>).cast<Map<String, dynamic>>(),
+        invoiceNumber: receipt['invoice_number']?.toString(),
+        invoiceAmount: (receipt['invoice_amount'] as num?)?.toDouble(),
+      );
       await _loadPurchasePlanningData();
       await loadBackendData();
       if (mounted) showSnackBar('Goods receipt saved. Batches require verification before sale.');
@@ -4217,6 +4222,8 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
   final Map<int, TextEditingController> _batchControllers = {};
   final Map<int, TextEditingController> _quantityControllers = {};
   final Map<int, DateTime> _expiryDates = {};
+  final TextEditingController _invoiceNumberController = TextEditingController();
+  final TextEditingController _invoiceAmountController = TextEditingController();
 
   @override
   void initState() {
@@ -4237,6 +4244,8 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
     for (final controller in _quantityControllers.values) {
       controller.dispose();
     }
+    _invoiceNumberController.dispose();
+    _invoiceAmountController.dispose();
     super.dispose();
   }
 
@@ -4268,7 +4277,21 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
         'received_quantity': received,
       });
     }
-    Navigator.of(context).pop(result);
+    final invoiceNumber = _invoiceNumberController.text.trim();
+    final invoiceAmountText = _invoiceAmountController.text.trim();
+    final invoiceAmount = double.tryParse(invoiceAmountText);
+    if ((invoiceNumber.isEmpty) != invoiceAmountText.isEmpty ||
+        (invoiceAmountText.isNotEmpty && (invoiceAmount == null || invoiceAmount < 0))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter both a valid invoice number and invoice amount, or leave both blank.')),
+      );
+      return;
+    }
+    Navigator.of(context).pop({
+      'items': result,
+      'invoice_number': invoiceNumber.isEmpty ? null : invoiceNumber,
+      'invoice_amount': invoiceAmount,
+    });
   }
 
   @override
@@ -4280,7 +4303,18 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: widget.items.map((item) {
+            children: [
+              TextField(
+                controller: _invoiceNumberController,
+                decoration: const InputDecoration(labelText: 'Supplier invoice number (optional)'),
+              ),
+              TextField(
+                controller: _invoiceAmountController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Actual invoice amount (INR, optional)'),
+              ),
+              const Divider(height: 24),
+              ...widget.items.map((item) {
               final itemId = (item['purchase_item_id'] as num).toInt();
               final productId = (item['product_id'] as num).toInt();
               final expiry = _expiryDates[itemId];
@@ -4320,7 +4354,8 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
                   ],
                 ),
               );
-            }).toList(),
+            }),
+            ],
           ),
         ),
       ),
