@@ -4,6 +4,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.product_batch import ProductBatch
 from app.models.stock_movement import StockMovement
+from app.models.shop_membership import ShopMembership
 
 
 def register_owner(client, email):
@@ -701,5 +702,122 @@ def test_supplier_cannot_receive_shop_purchase_order(client, db_session):
         }]},
     )
     assert response.status_code == 403
+    db_session.refresh(product)
+    assert product.quantity == 0
+
+
+def _create_employee(client, owner, shop_id, email):
+    invite = client.post(
+        f"/auth/shops/{shop_id}/employees/invitations",
+        headers=auth(owner["access_token"]),
+        json={"email": email},
+    )
+    assert invite.status_code == 201
+    accepted = client.post("/auth/employees/accept-invitation", json={
+        "invitation_token": invite.json()["invitation_token"],
+        "full_name": "Role Test Employee",
+        "password": "EmployeePass@123",
+    })
+    assert accepted.status_code == 201
+    return accepted
+
+
+def test_cashier_role_is_enforced_on_shop_staff_routes(client, db_session):
+    owner = register_owner(client, "cashier-role-owner@example.com")
+    shop_id = owner["shop"]["id"]
+    accepted = _create_employee(client, owner, shop_id, "cashier-role@example.com")
+    employee_id = accepted.json()["user"]["id"]
+
+    assigned = client.patch(
+        f"/shops/{shop_id}/employees/{employee_id}/job-role",
+        headers=auth(owner["access_token"]),
+        json={"job_role": "cashier"},
+    )
+    assert assigned.status_code == 200
+    assert assigned.json()["job_role"] == "cashier"
+
+    headers = auth(accepted.json()["access_token"])
+    assert client.get(f"/shops/{shop_id}/sales", headers=headers).status_code == 200
+    assert client.get(f"/shops/{shop_id}/distributors", headers=headers).status_code == 403
+    assert client.get(f"/shops/{shop_id}/purchase-orders", headers=headers).status_code == 403
+    assert client.get(
+        f"/shops/{shop_id}/agents/financial-position", headers=headers
+    ).status_code == 403
+
+
+def test_stock_manager_can_view_stock_but_not_supplier_administration(client, db_session):
+    owner = register_owner(client, "stock-manager-owner@example.com")
+    shop_id = owner["shop"]["id"]
+    accepted = _create_employee(client, owner, shop_id, "stock-manager@example.com")
+    employee_id = accepted.json()["user"]["id"]
+
+    assigned = client.patch(
+        f"/shops/{shop_id}/employees/{employee_id}/job-role",
+        headers=auth(owner["access_token"]),
+        json={"job_role": "stock_manager"},
+    )
+    assert assigned.status_code == 200
+
+    headers = auth(accepted.json()["access_token"])
+    assert client.get(f"/shops/{shop_id}/inventory/batches", headers=headers).status_code == 200
+    assert client.get(f"/shops/{shop_id}/distributors", headers=headers).status_code == 403
+    assert client.get(
+        f"/shops/{shop_id}/agents/financial-position", headers=headers
+    ).status_code == 403
+
+
+def test_supplier_can_update_only_own_order_fulfilment(client, db_session):
+    owner = register_owner(client, "supplier-progress-owner@example.com")
+    supplier_response = client.post("/auth/register/distributor", json={
+        "full_name": "Progress Supplier",
+        "email": "supplier-progress@example.com",
+        "password": "SupplierPass@123",
+        "business_name": "Progress Wholesale",
+    })
+    supplier_id = supplier_response.json()["supplier"]["id"]
+    product = Product(
+        shop_id=owner["shop"]["id"], name="Tea", quantity=0, minimum_stock=2,
+        purchase_price=100, selling_price=120, unit="kg", is_active=True,
+    )
+    db_session.add(product)
+    db_session.flush()
+    purchase = Purchase(
+        shop_id=owner["shop"]["id"], supplier_id=supplier_id,
+        invoice_number="KIRANAAI-PROGRESS-001", total_amount=100,
+        payment_status="pending", status="ordered",
+    )
+    db_session.add(purchase)
+    db_session.flush()
+
+    headers = auth(supplier_response.json()["access_token"])
+    updated = client.patch(
+        f"/supplier/orders/{purchase.id}/status",
+        headers=headers,
+        json={"status": "dispatched", "note": "Sent with today's truck", "expected_delivery_date": "2026-11-18"},
+    )
+    assert updated.status_code == 200, updated.text
+    db_session.refresh(purchase)
+    assert purchase.supplier_status == "dispatched"
+    assert purchase.status == "ordered"
+
+    received_attempt = client.patch(
+        f"/supplier/orders/{purchase.id}/status",
+        headers=headers,
+        json={"status": "received"},
+    )
+    assert received_attempt.status_code == 422
+
+    other_supplier = client.post("/auth/register/distributor", json={
+        "full_name": "Other Supplier",
+        "email": "other-progress@example.com",
+        "password": "SupplierPass@123",
+        "business_name": "Other Wholesale",
+    })
+    forbidden = client.patch(
+        f"/supplier/orders/{purchase.id}/status",
+        headers=auth(other_supplier.json()["access_token"]),
+        json={"status": "delayed"},
+    )
+    assert forbidden.status_code == 404
     db_session.refresh(product)
     assert product.quantity == 0
