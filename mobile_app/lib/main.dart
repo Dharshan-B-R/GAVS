@@ -3019,6 +3019,7 @@ if (showMessage) {
       if (mounted) showSnackBar('Connect a supplier before recording an issue.', isError: true);
       return;
     }
+    if (!mounted) return;
     int selectedSupplier = (_shopSuppliers.first['supplier_id'] as num).toInt();
     String severity = 'medium';
     final type = TextEditingController();
