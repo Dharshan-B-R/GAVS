@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.auth.routes import require_shop_staff, get_current_user
+from app.auth.routes import require_shop_staff, require_shop_owner, get_current_user
 from app.models.user import User
 from app.models.festival_event import FestivalEvent
 from app.models.shop import Shop
