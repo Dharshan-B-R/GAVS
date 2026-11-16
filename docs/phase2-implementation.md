@@ -35,6 +35,7 @@ Phase 2 intelligence is implemented incrementally on the dedicated `phase2-intel
 - `festival_events` stores shop-specific festivals, local events, promotions and market days.
 - `inventory_availability_snapshots` stores saleable quantity and availability per product per date.
 - `supplier_issues` stores shop-scoped supplier issues, optional purchase linkage, severity and resolution state.
+- `intelligence_alerts`, `intelligence_daily_summaries` and `recommendation_feedback` persist deduplicated in-app alerts, daily digests and staff decisions.
 - `intelligence_alerts`, `intelligence_daily_summaries` and `recommendation_feedback` persist daily decision support and user feedback.
 
 ## Remaining operational requirements
@@ -44,10 +45,11 @@ Phase 2 intelligence is implemented incrementally on the dedicated `phase2-intel
 3. **Supplier issue linkage:** Staff should attach a purchase ID when reporting a supplier issue; unlinked issues are counted but do not inflate the per-order issue rate.
 4. **Khata legacy mapping:** Owners must map old customer IDs to the correct shop. Unassigned legacy customers are intentionally excluded from shop financial totals.
 5. **Accounting precision:** Khata ageing is based on oldest transaction, not contractual due dates. Cash balance, UPI/bank settlement and supplier invoice due dates need separate ledger data before cash-flow forecasting can be claimed.
-6. **Supplier evidence coverage:** Old purchases without promised dates or actual receipt timestamps do not contribute to on-time delivery rate. Future orders must have expected dates entered and receipt workflow completed. Invoice totals are captured at receipt; internal PO estimates are excluded from payables until then.
-7. **Feedback loop:** Recommendation decisions are persisted, but are not yet used to automatically retrain or change ranking weights. Review feedback before introducing adaptive behavior.
-8. **Festival model quality:** Event comparisons require completed event windows and sufficient pre-event baseline history. Promotions, weather, stock availability and price effects are not causally separated yet.
-9. **Consolidated verification:** Run backend tests, Flutter analysis/build, migration review on a database copy, API permission checks and realistic-data validation only after explicit approval to test.
+6. **Notification delivery:** Alerts are available in the app and can be acknowledged. Push, SMS, WhatsApp and email delivery are not configured; those require a chosen provider and deployment credentials.
+7. **Feedback loop:** Recommendation decisions are persisted, but do not automatically retrain or change ranking weights. Review feedback before introducing adaptive behavior.
+8. **Supplier evidence coverage:** Old purchases without promised dates or actual receipt timestamps do not contribute to on-time delivery rate. Future orders must have expected dates entered and receipt workflow completed. Invoice totals are captured at receipt; internal PO estimates are excluded from payables until then.
+9. **Festival model quality:** Event comparisons require completed event windows and sufficient pre-event baseline history. Promotions, weather, stock availability and price effects are not causally separated yet.
+10. **Consolidated verification:** Run backend tests, Flutter analysis/build, migration review on a database copy, API permission checks and realistic-data validation only after explicit approval to test.
 
 ## API and safety rules
 
@@ -60,4 +62,4 @@ Phase 2 intelligence is implemented incrementally on the dedicated `phase2-intel
 
 ## Validation status
 
-**Testing is intentionally not run.** No test suite, Flutter analysis/build, migration execution, CI workflow or production data operation has been executed for this branch. The new Alembic revisions must be reviewed and applied to a disposable/staging database before production rollout. The daily job must be configured in the deployment scheduler after migration. A code commit is not proof of runtime or production readiness.
+**Testing is intentionally not run.** No test suite, Flutter analysis/build, migration execution, CI workflow or production data operation has been executed for this branch. The new Alembic revisions (`c42e8a7d1f30`, `d13b7a9c5e20`, `e1b4c6d8a920`, `f2a9c7d1e530`) must be reviewed and applied to a disposable/staging database before production rollout. The daily job must be configured in the deployment scheduler after migration. A code commit is not proof of runtime or production readiness.
