@@ -5013,6 +5013,21 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
     }
   }
 
+  Future<void> _updateOrderStatus(int purchaseId, String status) async {
+    setState(() => _confirming.add(purchaseId));
+    try {
+      await ApiService.updateSupplierOrderStatus(purchaseId, status: status);
+      await _load();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Order marked $status.')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update order: $error')));
+    } finally {
+      if (mounted) setState(() => _confirming.remove(purchaseId));
+    }
+  }
+
   Future<void> _editProfile() async {
     final current = _profile ?? {};
     final name = TextEditingController(text: current['name']?.toString() ?? '');
@@ -5114,7 +5129,24 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
                   style: const TextStyle(fontWeight: FontWeight.bold)),
                 Text('Shop: ${order['shop_name']}'),
                 Text('Amount: ₹${order['total_amount']}'),
-                Text('Status: ${order['status']}'),
+                Text('Order: ${order['status']}'),
+                Text('Fulfilment: ${order['supplier_status'] ?? 'pending'}'),
+                if (order['supplier_status_note'] != null)
+                  Text(order['supplier_status_note'].toString()),
+                if (order['expected_delivery_date'] != null)
+                  Text('Expected delivery: ${order['expected_delivery_date']}'),
+                if (order['status'] == 'ordered' || order['status'] == 'confirmed')
+                  Align(alignment: Alignment.centerRight, child: PopupMenuButton<String>(
+                    enabled: !_confirming.contains(id),
+                    tooltip: 'Update fulfilment',
+                    onSelected: (value) => _updateOrderStatus(id, value),
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(value: 'preparing', child: Text('Preparing')),
+                      PopupMenuItem(value: 'dispatched', child: Text('Dispatched')),
+                      PopupMenuItem(value: 'delayed', child: Text('Delayed')),
+                    ],
+                    child: const Chip(label: Text('Update delivery status')),
+                  )),
                 const Divider(),
                 ...items.map((item) => Text('${item['product_name'] ?? 'Product #${item['product_id']}'} · Qty ${item['quantity']} ${item['unit'] ?? ''}')),
                 if (order['status'] == 'ordered')
@@ -5126,7 +5158,7 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
             )));
           }),
           const Padding(padding: EdgeInsets.only(top: 16),
-            child: Text('Order confirmation is recorded in KiranaAI. Actual dispatch and delivery coordination still happen with the supplier.',
+            child: Text('Suppliers can report preparing, dispatched or delayed status. The shop records actual receipt and stock quantities.',
               style: TextStyle(color: Colors.black54))),
         ]),
       ),
