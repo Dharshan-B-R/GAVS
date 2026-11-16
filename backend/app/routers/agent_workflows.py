@@ -1,5 +1,6 @@
 """Shop-staff read-only endpoints for KiranaAI intelligence specialists."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -8,6 +9,7 @@ from app.database import get_db
 from app.auth.routes import require_shop_staff, get_current_user
 from app.models.user import User
 from app.models.festival_event import FestivalEvent
+from app.models.shop import Shop
 from app.services.demand_forecast_service import forecast_demand
 from app.services.reorder_service import build_reorder_recommendations
 from app.agents.supplier_agent import compare_suppliers
@@ -140,13 +142,15 @@ def orchestrate_question(shop_id: int, payload: dict,
             elif name == "seasonal":
                 results["seasonal"] = analyze_seasonal_demand(db, shop_id=shop_id)
             elif name == "event":
+                shop = db.query(Shop).filter(Shop.id == shop_id).first()
+                local_today = datetime.now(ZoneInfo(shop.timezone or "Asia/Kolkata")).date()
                 saved_events = db.query(FestivalEvent).filter(
                     FestivalEvent.shop_id == shop_id,
                     FestivalEvent.is_active.is_(True),
                 ).order_by(FestivalEvent.event_date.desc()).limit(30).all()
                 completed = [
                     event for event in saved_events
-                    if event.event_date <= date.today() - timedelta(days=7)
+                    if event.event_date <= local_today - timedelta(days=7)
                 ]
                 comparisons = []
                 for event in completed[:5]:
@@ -157,7 +161,7 @@ def orchestrate_question(shop_id: int, payload: dict,
                 upcoming = [
                     {"event_id": event.id, "name": event.name,
                      "event_date": event.event_date, "event_type": event.event_type}
-                    for event in saved_events if event.event_date > date.today()
+                    for event in saved_events if event.event_date > local_today
                 ]
                 results["event"] = {
                     "status": "available" if comparisons or upcoming else "no_saved_events",
