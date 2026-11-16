@@ -498,6 +498,7 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   List<dynamic> _festivalEvents = [];
   Map<String, dynamic> _availabilityCoverage = {};
   bool _availabilityCapturing = false;
+  List<dynamic> _shopCustomers = [];
   final List<Map<String, String>> _aiMessages = [
     {'role': 'assistant', 'text': 'Ask about low stock, expiry, dead stock, sales trends, forecasts or reorder recommendations.'},
   ];
@@ -2852,11 +2853,13 @@ if (showMessage) {
       final values = await Future.wait([
         ApiService.getFestivalCalendar(),
         ApiService.getAvailabilitySnapshotCoverage(),
+        ApiService.getShopCustomers(),
       ]);
       if (!mounted) return;
       setState(() {
         _festivalEvents = values[0] as List<dynamic>;
         _availabilityCoverage = values[1] as Map<String, dynamic>;
+        _shopCustomers = values[2] as List<dynamic>;
       });
     } catch (_) {
       // The primary intelligence response remains usable if optional context
@@ -2878,6 +2881,123 @@ if (showMessage) {
     }
   }
 
+
+
+  Future<void> _createKhataCustomer() async {
+    final name = TextEditingController();
+    final phone = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Add shop customer'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: name, decoration: const InputDecoration(labelText: 'Customer name')),
+          TextField(controller: phone, keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(labelText: 'Phone (optional)')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save customer')),
+        ],
+      ),
+    );
+    if (accepted == true && name.text.trim().isNotEmpty) {
+      try {
+        await ApiService.createShopCustomer({'name': name.text.trim(), 'phone': phone.text.trim()});
+        await _loadIntelligenceContext();
+        if (mounted) showSnackBar('Customer added to this shop.');
+      } catch (error) {
+        if (mounted) showSnackBar('Could not add customer: $error', isError: true);
+      }
+    }
+    name.dispose();
+    phone.dispose();
+  }
+
+  Future<void> _addKhataEntry(int customerId) async {
+    final amount = TextEditingController();
+    String kind = 'credit';
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(builder: (context, updateDialog) =>
+        AlertDialog(
+          title: const Text('Record khata transaction'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            DropdownButtonFormField<String>(
+              value: kind,
+              decoration: const InputDecoration(labelText: 'Transaction'),
+              items: const [
+                DropdownMenuItem(value: 'credit', child: Text('New credit / udhar')),
+                DropdownMenuItem(value: 'repayment', child: Text('Customer repayment')),
+              ],
+              onChanged: (value) { if (value != null) updateDialog(() => kind = value); },
+            ),
+            TextField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Amount (INR)')),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save')),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true) {
+      final value = double.tryParse(amount.text.trim());
+      if (value == null || value <= 0) {
+        if (mounted) showSnackBar('Enter a valid positive amount.', isError: true);
+      } else {
+        try {
+          await ApiService.addShopKhataTransaction(customerId, {
+            'transaction_type': kind, 'amount': value,
+          });
+          if (mounted) showSnackBar('Khata transaction recorded.');
+          await _openKhataLedger(customerId);
+        } catch (error) {
+          if (mounted) showSnackBar('Could not record khata transaction: $error', isError: true);
+        }
+      }
+    }
+    amount.dispose();
+  }
+
+  Future<void> _openKhataLedger(int customerId) async {
+    try {
+      final ledger = await ApiService.getShopKhataLedger(customerId);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(ledger['customer_name']?.toString() ?? 'Customer khata'),
+          content: SizedBox(width: 520, child: SingleChildScrollView(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Outstanding: ₹${ledger['outstanding_amount'] ?? 0}',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              ...(ledger['transactions'] as List? ?? []).map((raw) {
+                final tx = raw as Map<String, dynamic>;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('${tx['transaction_type']} · ₹${tx['amount']}'),
+                  subtitle: Text(tx['created_at']?.toString() ?? ''),
+                  trailing: Text('₹${tx['running_balance']}'),
+                );
+              }),
+            ]),
+          )),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close')),
+            FilledButton(onPressed: () {
+              Navigator.pop(dialogContext);
+              _addKhataEntry(customerId);
+            }, child: const Text('Add transaction')),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (mounted) showSnackBar('Could not load customer ledger: $error', isError: true);
+    }
+  }
 
   Future<void> _setExpectedDeliveryDate(Map<String, dynamic> order) async {
     final purchaseId = (order['purchase_id'] as num?)?.toInt();
@@ -3098,6 +3218,40 @@ if (showMessage) {
                 style: TextStyle(color: Colors.orange)),
           ],
 
+
+          const SizedBox(height: 16),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Customer khata',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              const Text('Shop-scoped customer credit and repayment ledger. Historical unassigned customers are excluded until an owner assigns them.'),
+              Align(alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _createKhataCustomer,
+                  icon: const Icon(Icons.person_add_alt_1),
+                  label: const Text('Add customer'),
+                )),
+              if (_shopCustomers.isEmpty)
+                const Text('No shop customers yet.'),
+              ..._shopCustomers.take(8).map((raw) {
+                final customer = raw as Map<String, dynamic>;
+                final id = (customer['customer_id'] as num).toInt();
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.person_outline),
+                  title: Text(customer['name']?.toString() ?? 'Customer'),
+                  subtitle: Text(customer['phone']?.toString() ?? 'No phone recorded'),
+                  trailing: IconButton(
+                    tooltip: 'View khata ledger',
+                    icon: const Icon(Icons.receipt_long_outlined),
+                    onPressed: () => _openKhataLedger(id),
+                  ),
+                );
+              }),
+            ],
+          ))),
           const SizedBox(height: 16),
           Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
