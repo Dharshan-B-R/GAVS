@@ -1414,6 +1414,58 @@ if (showMessage) {
 
 
 
+          const SizedBox(height: 20),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text("Today's attention", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                if (_intelligenceAlerts.isEmpty)
+                  const Text('No open shop alerts at the moment.')
+                else ..._intelligenceAlerts.take(3).map((raw) {
+                  final alert = raw as Map<String, dynamic>;
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading: const Icon(Icons.notifications_active_outlined, color: Colors.orange),
+                    title: Text(alert['title']?.toString() ?? alert['alert_type']?.toString() ?? 'Shop alert'),
+                    subtitle: Text(alert['message']?.toString() ?? alert['description']?.toString() ?? 'Review this shop alert'),
+                    trailing: IconButton(
+                      tooltip: 'Acknowledge',
+                      icon: const Icon(Icons.check_circle_outline),
+                      onPressed: () {
+                        final id = (alert['alert_id'] ?? alert['id']) as num?;
+                        if (id != null) _acknowledgeAlert(id.toInt());
+                      },
+                    ),
+                  );
+                }),
+                Align(alignment: Alignment.centerRight, child: TextButton.icon(
+                  onPressed: () {
+                    setState(() => selectedIndex = 8);
+                    _loadPhase2Intelligence();
+                  },
+                  icon: const Icon(Icons.insights_outlined),
+                  label: const Text('View shop insights'),
+                )),
+              ]),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            OutlinedButton.icon(
+              onPressed: () { setState(() => selectedIndex = 5); _loadIntelligenceContext(); },
+              icon: const Icon(Icons.people_outline), label: const Text('Customer khata')),
+            OutlinedButton.icon(
+              onPressed: () { setState(() => selectedIndex = 7); _loadSalesHistory(); loadBackendData(); },
+              icon: const Icon(Icons.bar_chart), label: const Text('Reports')),
+            FilledButton.tonalIcon(
+              onPressed: () { setState(() => selectedIndex = 4); if (_intelligenceSnapshot.isEmpty) _loadPhase2Intelligence(); },
+              icon: const Icon(Icons.auto_awesome), label: const Text('Ask AI')),
+          ]),
+          const SizedBox(height: 20),
+
           const Text(
 
             'Recent Inventory',
