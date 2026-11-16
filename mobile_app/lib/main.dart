@@ -2704,7 +2704,7 @@ if (showMessage) {
                 title: Text(order['purchase_order_number']?.toString() ?? 'Purchase order'),
                 subtitle: Text('Status: $status · ₹${order['total_amount']} · Promised: ${order['expected_delivery_date'] ?? 'not set'}'),
                 trailing: (status == 'ordered' || status == 'confirmed')
-                    ? Wrap(mainAxisSize: MainAxisSize.min, spacing: 4, children: [
+                    ? Wrap(spacing: 4, children: [
                         IconButton(
                           tooltip: 'Set supplier-promised delivery date',
                           icon: const Icon(Icons.event_available_outlined),
@@ -3066,6 +3066,7 @@ if (showMessage) {
         ),
       ),
     );
+    if (!mounted) return;
     if (accepted == true && type.text.trim().isNotEmpty && description.text.trim().isNotEmpty) {
       try {
         await ApiService.createSupplierIssue(
@@ -3241,7 +3242,7 @@ if (showMessage) {
     try {
       await ApiService.setExpectedSupplierDeliveryDate(
         purchaseId, picked.toIso8601String().split('T').first);
-      await _loadPurchasePlanning();
+      await _loadPurchasePlanningData();
       if (mounted) showSnackBar('Supplier-promised delivery date saved.');
     } catch (error) {
       if (mounted) showSnackBar('Could not save delivery date: $error', isError: true);
@@ -3544,7 +3545,7 @@ if (showMessage) {
               const Text('Capture today’s saleable batch stock. Repeated daily snapshots help the forecast distinguish low sales from stockout days.'),
               const SizedBox(height: 10),
               FilledButton.tonalIcon(
-                onPressed: _availabilityCapturing ? null : _captureDailyAvailability,
+                onPressed: _availabilityCapturing ? null : _captureAvailabilitySnapshot,
                 icon: const Icon(Icons.camera_alt_outlined),
                 label: Text(_availabilityCapturing ? 'Capturing…' : 'Capture today’s availability'),
               ),
