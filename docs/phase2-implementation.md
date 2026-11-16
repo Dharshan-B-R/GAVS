@@ -10,7 +10,7 @@ Phase 2 intelligence is implemented incrementally on the dedicated `phase2-intel
 | Expiry Intelligence | Batch expiry exposure, recorded disposal loss and supplier-credit reconciliation | `GET /shops/{shop_id}/agents/expiry-risk` | Pending actions are not realized losses |
 | Dead Stock | Mature active products with positive inventory and no recorded sale | `GET /shops/{shop_id}/agents/dead-stock` | Missing history is not proof of no demand |
 | Stockout Risk | Recorded sale velocity vs verified, unexpired saleable stock | `GET /shops/{shop_id}/agents/stockout-risk` | Stockout-censored demand remains unknown without availability observations |
-| Availability History | Daily saleable batch snapshots, with one shop/product/date observation | `POST /shops/{shop_id}/availability-snapshots/capture`; `backend/scripts/capture_daily_availability.py` | Flutter has a manual action and a cron-ready all-shop command; deployment must configure the schedule |
+| Availability History | Daily saleable batch snapshots, with one shop/product/date observation | `POST /shops/{shop_id}/availability-snapshots/capture`; `backend/scripts/run_daily_intelligence.py` | Flutter has a manual action and a cron-ready all-shop command; deployment must configure the schedule |
 | Demand Forecast | Observed sales velocity, selling-day coverage, weekday profile and availability-adjusted velocity when snapshots cover at least half the requested window | `GET /shops/{shop_id}/agents/forecast` | Sparse or incomplete evidence is low confidence; no automatic seasonal uplift |
 | Seasonal Demand | Observed monthly sales patterns | `GET /shops/{shop_id}/agents/seasonal-demand` | Unobserved months remain null |
 | Festival / Event Demand | Shop-owned event calendar and event-window vs preceding baseline comparison | `/shops/{shop_id}/festival-calendar`, `GET /shops/{shop_id}/agents/event-demand/{event_id}` | Owner enters local events; only completed windows are compared |
@@ -40,7 +40,7 @@ Phase 2 intelligence is implemented incrementally on the dedicated `phase2-intel
 
 ## Remaining operational requirements
 
-1. **Daily availability capture:** The app currently exposes a manual capture action. A cron-ready all-shop command is included at `backend/scripts/capture_daily_availability.py`. Configure it in the deployment environment so snapshot coverage is consistent without staff remembering to tap the button.
+1. **Daily availability capture:** The app currently exposes a manual capture action. A cron-ready all-shop command is included at `backend/scripts/run_daily_intelligence.py`. Configure it in the deployment environment so snapshot coverage is consistent without staff remembering to tap the button.
 2. **Local festival seed data:** Each shop owner should enter/confirm the relevant local calendar. No festival uplift is guessed from city alone.
 3. **Supplier issue linkage:** Staff should attach a purchase ID when reporting a supplier issue; unlinked issues are counted but do not inflate the per-order issue rate.
 4. **Khata legacy mapping:** Owners must map old customer IDs to the correct shop. Unassigned legacy customers are intentionally excluded from shop financial totals.
