@@ -61,7 +61,7 @@ class PurchaseReceiptItem(BaseModel):
 class PurchaseReceiptCreate(BaseModel):
     items: list[PurchaseReceiptItem] = Field(min_length=1, max_length=100)
     invoice_number: Optional[str] = Field(default=None, min_length=1, max_length=100)
-    invoice_amount: Optional[Decimal] = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    invoice_amount: Optional[Decimal] = Field(default=None, gt=0, max_digits=14, decimal_places=2)
 
 
 def _money(value: Decimal) -> Decimal:
