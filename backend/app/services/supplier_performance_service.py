@@ -1,63 +1,87 @@
-"""Supplier performance evidence from received purchase history.
+"""Supplier delivery and fill-rate evidence from shop purchase orders.
 
-The present schema has no promised delivery timestamp, separate ordered and received
-quantities, or supplier issue log. Unavailable rates are intentionally left null.
+Rates use only explicit expected delivery dates and separately recorded ordered and
+received quantities. Legacy deliveries without promised dates remain outside the
+on-time denominator rather than being assumed punctual.
 """
-from sqlalchemy import func
+from collections import defaultdict
+from datetime import date
 from sqlalchemy.orm import Session
 
-from app.models.product import Product
 from app.models.purchase import Purchase
-from app.models.purchase_item import PurchaseItem
 from app.models.supplier import Supplier
 
 
 def analyze_supplier_performance(db: Session, shop_id: int, limit: int = 100) -> dict:
     if not 1 <= limit <= 500:
         raise ValueError("limit must be between 1 and 500")
-    rows = (
-        db.query(
-            Supplier.id, Supplier.name,
-            func.count(func.distinct(Purchase.id)),
-            func.count(PurchaseItem.id),
-            func.coalesce(func.sum(PurchaseItem.quantity), 0),
-            func.coalesce(func.sum(PurchaseItem.subtotal), 0),
-            func.min(Purchase.purchase_date),
-            func.max(Purchase.purchase_date),
-        )
-        .join(Purchase, Purchase.supplier_id == Supplier.id)
-        .join(PurchaseItem, PurchaseItem.purchase_id == Purchase.id)
-        .join(Product, Product.id == PurchaseItem.product_id)
-        .filter(
-            Purchase.shop_id == shop_id, Product.shop_id == shop_id,
-            Product.is_active.is_(True), Purchase.status == "received",
-            PurchaseItem.quantity > 0,
-        )
-        .group_by(Supplier.id, Supplier.name)
-        .order_by(func.sum(PurchaseItem.subtotal).desc(), Supplier.name.asc())
-        .limit(limit).all()
-    )
-    suppliers = [{
-        "supplier_id": row[0], "supplier_name": row[1],
-        "received_order_count": int(row[2] or 0),
-        "received_invoice_line_count": int(row[3] or 0),
-        "received_quantity": round(float(row[4] or 0), 3),
-        "recorded_received_value": round(float(row[5] or 0), 2),
-        "first_recorded_receipt": row[6], "last_recorded_receipt": row[7],
-        "on_time_delivery_rate": None, "fill_rate": None, "issue_rate": None,
-        "performance_status": "insufficient_delivery_evidence",
-    } for row in rows]
+    purchases = db.query(Purchase).filter(
+        Purchase.shop_id == shop_id,
+        Purchase.status.in_(["received", "partially_received"]),
+    ).order_by(Purchase.purchase_date.desc()).limit(2000).all()
+    grouped = defaultdict(lambda: {
+        "orders": 0, "lines": 0, "received_value": 0.0, "received_qty": 0.0,
+        "ordered_qty": 0.0, "on_time": 0, "dated_deliveries": 0,
+        "first_receipt": None, "last_receipt": None,
+    })
+    for purchase in purchases:
+        supplier = db.query(Supplier).filter(Supplier.id == purchase.supplier_id).first()
+        if supplier is None:
+            continue
+        item = grouped[purchase.supplier_id]
+        item["orders"] += 1
+        item["received_value"] += float(purchase.total_amount or 0)
+        if purchase.received_at is not None:
+            received_day = purchase.received_at.date()
+            item["first_receipt"] = min(item["first_receipt"], received_day) if item["first_receipt"] else received_day
+            item["last_receipt"] = max(item["last_receipt"], received_day) if item["last_receipt"] else received_day
+            if purchase.expected_delivery_date is not None:
+                item["dated_deliveries"] += 1
+                if received_day <= purchase.expected_delivery_date:
+                    item["on_time"] += 1
+        for line in purchase.items:
+            item["lines"] += 1
+            item["ordered_qty"] += float(line.ordered_quantity if line.ordered_quantity is not None else line.quantity or 0)
+            item["received_qty"] += float(line.received_quantity or 0)
+
+    result = []
+    for supplier_id, item in grouped.items():
+        supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
+        ordered = item["ordered_qty"]
+        received = item["received_qty"]
+        result.append({
+            "supplier_id": supplier_id,
+            "supplier_name": supplier.name,
+            "received_order_count": item["orders"],
+            "received_invoice_line_count": item["lines"],
+            "received_quantity": round(received, 3),
+            "ordered_quantity": round(ordered, 3),
+            "recorded_received_value": round(item["received_value"], 2),
+            "first_recorded_receipt": item["first_receipt"],
+            "last_recorded_receipt": item["last_receipt"],
+            "on_time_delivery_rate": round(item["on_time"] / item["dated_deliveries"], 4) if item["dated_deliveries"] else None,
+            "on_time_delivery_sample_count": item["dated_deliveries"],
+            "fill_rate": round(min(received / ordered, 1.0), 4) if ordered > 0 else None,
+            "performance_status": "measured" if item["dated_deliveries"] or ordered > 0 else "insufficient_delivery_evidence",
+        })
+    result.sort(key=lambda row: (
+        row["on_time_delivery_rate"] is None,
+        -(row["on_time_delivery_rate"] or 0),
+        row["supplier_name"],
+    ))
+    result = result[:limit]
     return {
-        "analysis": "supplier_performance", "shop_id": shop_id,
-        "supplier_count": len(suppliers), "suppliers": suppliers,
+        "analysis": "supplier_performance",
+        "shop_id": shop_id,
+        "supplier_count": len(result),
+        "suppliers": result,
         "unavailable_metrics": {
-            "on_time_delivery_rate": "Promised delivery dates are not stored.",
-            "fill_rate": "Ordered and received quantities are not stored separately.",
-            "issue_rate": "Supplier issue/dispute records are not present.",
+            "issue_rate": "Supplier issue/dispute records are not present in the current schema.",
+            "on_time_delivery_rate": "Only orders with an explicitly recorded expected delivery date and receipt timestamp contribute.",
         },
         "limitations": [
-            "Only completed receipts linked to this shop are included",
-            "Receipt dates and received values are historical activity, not reliability scores",
+            "Legacy receipts without received_at or expected_delivery_date are excluded from on-time rate",
+            "Fill rate uses separately recorded ordered and received quantities; older records are backfilled as fully received",
+            "No reliability rating is inferred when there is no eligible evidence",
         ],
     }
-}
