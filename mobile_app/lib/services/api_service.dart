@@ -547,11 +547,17 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> receivePurchaseOrder(
-    int purchaseId, List<Map<String, dynamic>> items) async {
+    int purchaseId, List<Map<String, dynamic>> items, {
+    String? invoiceNumber, double? invoiceAmount,
+  }) async {
     final shopId = await _requireActiveShopId();
     return _requestJson('POST',
       '/shops/$shopId/purchases/$purchaseId/receive',
-      body: {'items': items});
+      body: {
+        'items': items,
+        'invoice_number': invoiceNumber,
+        'invoice_amount': invoiceAmount,
+      });
   }
 
   static Future<Map<String, dynamic>> adjustStock({
@@ -570,6 +576,11 @@ class ApiService {
     if (batchNumber != null) body['batch_number'] = batchNumber;
     if (expiryDate != null) body['expiry_date'] = expiryDate;
     return _requestJson('POST', '/shops/$shopId/inventory/adjustments', body: body);
+  }
+
+  static Future<Map<String, dynamic>> setEmployeeJobRole(int userId, String jobRole) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PATCH', '/shops/$shopId/employees/$userId/job-role', body: {'job_role': jobRole});
   }
 
   static Future<Map<String, dynamic>> setEmployeeStatus(int userId, bool active) async {
@@ -606,6 +617,11 @@ class ApiService {
     return _requestList('/shops/$shopId/employees');
   }
 
+  static Future<Map<String, dynamic>> revokeEmployeeInvitation(int invitationId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('DELETE', '/auth/shops/$shopId/employees/invitations/$invitationId');
+  }
+
   static Future<Map<String, dynamic>> inviteEmployee(String email) async {
     final shopId = await _requireActiveShopId();
     return _requestJson('POST', '/auth/shops/$shopId/employees/invitations',
@@ -632,7 +648,227 @@ class ApiService {
   static Future<Map<String, dynamic>> getSupplierProfile() async =>
       _requestJson('GET', '/supplier/profile');
 
+  static Future<Map<String, dynamic>> updateSupplierProfile(Map<String, dynamic> data) async =>
+      _requestJson('PUT', '/supplier/profile', body: data);
+
   static Future<Map<String, dynamic>> confirmSupplierOrder(int purchaseId) async =>
       _requestJson('POST', '/supplier/orders/$purchaseId/confirm');
+
+  static Future<Map<String, dynamic>> updateSupplierOrderStatus(
+    int purchaseId, {required String status, String? note}) async =>
+      _requestJson('PATCH', '/supplier/orders/$purchaseId/status', body: {
+        'status': status,
+        'note': note,
+      });
+
+  /// Run the Phase 2 read-only intelligence specialists for the active shop.
+  /// The orchestrator returns structured evidence and never places orders.
+  static Future<Map<String, dynamic>> getPhase2IntelligenceSnapshot() async {
+    return getInventoryAgentAnswer(
+      'Show expiry risk, dead stock, stockout risk, seasonal demand, '
+      'supplier performance and financial position for this shop.',
+    );
+  }
+
+  static Future<Map<String, dynamic>> getExpiryIntelligence({
+    int horizonDays = 30,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/expiry-risk',
+      query: {'horizon_days': horizonDays.toString()});
+  }
+
+  static Future<Map<String, dynamic>> getStockoutIntelligence({
+    int historyDays = 30,
+    int leadTimeDays = 7,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/stockout-risk',
+      query: {
+        'history_days': historyDays.toString(),
+        'lead_time_days': leadTimeDays.toString(),
+      });
+  }
+
+  static Future<Map<String, dynamic>> getDeadStockIntelligence({
+    int days = 90,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/dead-stock',
+      query: {'days': days.toString()});
+  }
+
+  static Future<Map<String, dynamic>> getSeasonalIntelligence({
+    int historyDays = 365,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/seasonal-demand',
+      query: {'history_days': historyDays.toString()});
+  }
+
+  static Future<Map<String, dynamic>> getSupplierPerformanceIntelligence() async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/supplier-performance');
+  }
+
+  static Future<Map<String, dynamic>> getFinancialIntelligence() async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/financial-position');
+  }
+
+  /// Shop-owned khata, festival calendar and availability evidence APIs.
+  static Future<List<dynamic>> getShopCustomers() async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/customers');
+  }
+
+  static Future<Map<String, dynamic>> createShopCustomer(Map<String, dynamic> data) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/customers', body: data);
+  }
+
+  static Future<Map<String, dynamic>> addShopKhataTransaction(
+    int customerId, Map<String, dynamic> data) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/customers/$customerId/khata', body: data);
+  }
+
+  static Future<Map<String, dynamic>> getShopKhataLedger(int customerId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/customers/$customerId/khata');
+  }
+
+  static Future<List<dynamic>> getFestivalCalendar({
+    String? startDate, String? endDate,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    final query = <String>[];
+    if (startDate != null) query.add('start_date=${Uri.encodeQueryComponent(startDate)}');
+    if (endDate != null) query.add('end_date=${Uri.encodeQueryComponent(endDate)}');
+    final suffix = query.isEmpty ? '' : '?${query.join('&')}';
+    return _requestList('/shops/$shopId/festival-calendar$suffix');
+  }
+
+  static Future<Map<String, dynamic>> addFestivalEvent({
+    required String name, required String eventDate,
+    String eventType = 'festival', String? notes,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/festival-calendar',
+      body: {'name': name, 'event_date': eventDate, 'event_type': eventType, 'notes': notes});
+  }
+
+  static Future<Map<String, dynamic>> compareSavedFestivalEvent(int eventId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/agents/event-demand/$eventId');
+  }
+
+  static Future<Map<String, dynamic>> captureDailyAvailability({
+    String? snapshotDate,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/availability-snapshots/capture',
+      query: snapshotDate == null ? null : {'snapshot_date': snapshotDate});
+  }
+
+  static Future<Map<String, dynamic>> getAvailabilitySnapshotCoverage() async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('GET', '/shops/$shopId/availability-snapshots');
+  }
+
+  static Future<Map<String, dynamic>> setExpectedSupplierDeliveryDate(
+    int purchaseId, String expectedDate,
+  ) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PUT', '/shops/$shopId/purchases/$purchaseId/expected-delivery',
+      body: {'expected_delivery_date': expectedDate});
+  }
+
+
+  static Future<Map<String, dynamic>> updateShopIntelligenceSettings({
+    required String city, required String state,
+    String country = 'India', String timezone = 'Asia/Kolkata',
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PUT', '/shops/$shopId/intelligence-settings',
+      body: {'city': city, 'state': state, 'country': country, 'timezone': timezone});
+  }
+
+
+  static Future<List<dynamic>> getSupplierIssues({String? status}) async {
+    final shopId = await _requireActiveShopId();
+    final suffix = status == null ? '' : '?status=${Uri.encodeQueryComponent(status)}';
+    return _requestList('/shops/$shopId/supplier-issues$suffix');
+  }
+
+  static Future<Map<String, dynamic>> createSupplierIssue({
+    required int supplierId, int? purchaseId,
+    required String issueType, required String description,
+    String severity = 'medium',
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/supplier-issues', body: {
+      'supplier_id': supplierId, 'purchase_id': purchaseId,
+      'issue_type': issueType, 'description': description, 'severity': severity,
+    });
+  }
+
+  static Future<Map<String, dynamic>> resolveSupplierIssue(int issueId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PATCH', '/shops/$shopId/supplier-issues/$issueId/resolve');
+  }
+
+
+  static Future<Map<String, dynamic>> assignLegacyCustomerToShop(int customerId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PUT', '/shops/$shopId/customers/$customerId/assign');
+  }
+
+
+  static Future<List<dynamic>> getIntelligenceAlerts({String status = 'open'}) async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/intelligence-alerts?status=${Uri.encodeQueryComponent(status)}');
+  }
+
+  static Future<Map<String, dynamic>> acknowledgeIntelligenceAlert(int alertId) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('PATCH', '/shops/$shopId/intelligence-alerts/$alertId/acknowledge');
+  }
+
+  static Future<List<dynamic>> getIntelligenceDailySummaries({int limit = 7}) async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/intelligence-daily-summaries?limit=$limit');
+  }
+
+  static Future<Map<String, dynamic>> generateIntelligenceDailySummary() async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/intelligence-daily-summaries/generate');
+  }
+
+  static Future<Map<String, dynamic>> submitRecommendationFeedback({
+    required String recommendationKey,
+    required String decision,
+    int? productId,
+    double? recommendedQuantity,
+    double? actualQuantity,
+    String? notes,
+  }) async {
+    final shopId = await _requireActiveShopId();
+    return _requestJson('POST', '/shops/$shopId/recommendation-feedback', body: {
+      'recommendation_type': 'reorder',
+      'recommendation_key': recommendationKey,
+      'decision': decision,
+      'product_id': productId,
+      'recommended_quantity': recommendedQuantity,
+      'actual_quantity': actualQuantity,
+      'notes': notes,
+    });
+  }
+
+  static Future<List<dynamic>> getRecommendationFeedback({int limit = 100}) async {
+    final shopId = await _requireActiveShopId();
+    return _requestList('/shops/$shopId/recommendation-feedback?limit=$limit');
+  }
+
 
 }

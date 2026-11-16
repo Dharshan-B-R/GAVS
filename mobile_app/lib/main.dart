@@ -481,7 +481,9 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   double _committedBudget = 0;
   double _remainingBudget = 0;
   final TextEditingController _employeeEmailController = TextEditingController();
+  final TextEditingController _legacyCustomerIdController = TextEditingController();
   List<dynamic> _employees = [];
+  List<dynamic> _employeeInvitations = [];
   bool _employeesLoading = false;
   final TextEditingController _saleQuantityController = TextEditingController(text: '1');
   final TextEditingController _aiQuestionController = TextEditingController();
@@ -492,6 +494,17 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
   bool _salesLoading = false;
   bool _saleSubmitting = false;
   bool _aiLoading = false;
+  bool _intelligenceLoading = false;
+  String? _intelligenceError;
+  Map<String, dynamic> _intelligenceSnapshot = {};
+  List<dynamic> _festivalEvents = [];
+  Map<String, dynamic> _availabilityCoverage = {};
+  bool _availabilityCapturing = false;
+  List<dynamic> _shopCustomers = [];
+  List<dynamic> _supplierIssues = [];
+  List<dynamic> _intelligenceAlerts = [];
+  List<dynamic> _dailySummaries = [];
+  List<dynamic> _feedbackHistory = [];
   final List<Map<String, String>> _aiMessages = [
     {'role': 'assistant', 'text': 'Ask about low stock, expiry, dead stock, sales trends, forecasts or reorder recommendations.'},
   ];
@@ -514,6 +527,11 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
         _activeShopId = (active?['shop_id'] as num?)?.toInt();
         _activeShopName = active?['name']?.toString();
       });
+      if (shops.isNotEmpty) {
+        _loadPhase2Intelligence();
+        _loadIntelligenceContext();
+        _loadSalesHistory();
+      }
     } catch (error) {
       if (mounted) showSnackBar('Could not load shop memberships: $error', isError: true);
     }
@@ -556,6 +574,7 @@ class _KiranaHomePageState extends State<KiranaHomePage> {
     _budgetController.dispose();
     _supplierIdController.dispose();
     _employeeEmailController.dispose();
+    _legacyCustomerIdController.dispose();
     super.dispose();
   }
 
@@ -1001,15 +1020,10 @@ if (showMessage) {
   Widget build(BuildContext context) {
 
     final pages = [
-      buildDashboard(),
-      buildInventory(),
-      buildSales(),
-      buildPurchasing(),
-      buildAiAssistant(),
-      buildSettings(),
+      buildDashboard(), buildInventory(), buildSales(), buildPurchasing(),
+      buildAiAssistant(), buildCustomers(), buildSupplierIssues(), buildReports(),
+      buildIntelligence(), buildMore(), buildSettings(),
     ];
-
-
 
     return Scaffold(
 
@@ -1020,53 +1034,45 @@ if (showMessage) {
       ),
 
       bottomNavigationBar: NavigationBar(
-
-        selectedIndex: selectedIndex,
-
+        selectedIndex: selectedIndex <= 3 ? selectedIndex : 4,
         onDestinationSelected: (index) {
-
-          setState(() {
-
-            selectedIndex = index;
-
-          });
-
-
-
-          if (index == 1) {
+          final pageIndex = index == 4 ? 9 : index;
+          setState(() => selectedIndex = pageIndex);
+          if (pageIndex == 1) {
             loadBackendData();
-          } else if (index == 2) {
+          } else if (pageIndex == 2) {
             _loadSalesHistory();
-          } else if (index == 3) {
+          } else if (pageIndex == 3) {
             loadBackendData();
             loadRestockRecommendations();
-          } else if (index == 5 && widget.userRole == 'owner') {
-            _loadEmployees();
+            _loadPurchasePlanningData();
+          } else if (pageIndex == 9) {
+            _loadIntelligenceContext();
           }
-
         },
-
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
           NavigationDestination(icon: Icon(Icons.inventory_2_outlined), selectedIcon: Icon(Icons.inventory_2), label: 'Inventory'),
           NavigationDestination(icon: Icon(Icons.point_of_sale_outlined), selectedIcon: Icon(Icons.point_of_sale), label: 'Sales'),
           NavigationDestination(icon: Icon(Icons.shopping_cart_outlined), selectedIcon: Icon(Icons.shopping_cart), label: 'Purchasing'),
-          NavigationDestination(icon: Icon(Icons.auto_awesome_outlined), selectedIcon: Icon(Icons.auto_awesome), label: 'AI Assistant'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
+          NavigationDestination(icon: Icon(Icons.grid_view_outlined), selectedIcon: Icon(Icons.grid_view), label: 'More'),
         ],
       ),
 
       floatingActionButton: FloatingActionButton.extended(
 
-        onPressed: () => setState(() => selectedIndex = 4),
+        onPressed: () {
+          setState(() => selectedIndex = 4);
+          if (_intelligenceSnapshot.isEmpty) _loadPhase2Intelligence();
+        },
 
         backgroundColor: const Color(0xFF16845B),
 
         foregroundColor: Colors.white,
 
-        icon: const Icon(Icons.mic),
+        icon: const Icon(Icons.chat_bubble_outline),
 
-        label: const Text('Talk to AI'),
+        label: const Text('Ask AI'),
 
       ),
 
@@ -1112,7 +1118,10 @@ if (showMessage) {
 
     return RefreshIndicator(
 
-      onRefresh: () => loadBackendData(showMessage: true),
+      onRefresh: () async {
+        await loadBackendData(showMessage: true);
+        await _loadIntelligenceContext();
+      },
 
       child: ListView(
 
@@ -1386,7 +1395,7 @@ if (showMessage) {
 
                     setState(() {
 
-                      selectedIndex = 2;
+                      selectedIndex = 3;
 
                     });
 
@@ -1408,6 +1417,58 @@ if (showMessage) {
           const SizedBox(height: 24),
 
 
+
+          const SizedBox(height: 20),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text("Today's attention", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                if (_intelligenceAlerts.isEmpty)
+                  const Text('No open shop alerts at the moment.')
+                else ..._intelligenceAlerts.take(3).map((raw) {
+                  final alert = raw as Map<String, dynamic>;
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading: const Icon(Icons.notifications_active_outlined, color: Colors.orange),
+                    title: Text(alert['title']?.toString() ?? alert['alert_type']?.toString() ?? 'Shop alert'),
+                    subtitle: Text(alert['message']?.toString() ?? alert['description']?.toString() ?? 'Review this shop alert'),
+                    trailing: IconButton(
+                      tooltip: 'Acknowledge',
+                      icon: const Icon(Icons.check_circle_outline),
+                      onPressed: () {
+                        final id = (alert['alert_id'] ?? alert['id']) as num?;
+                        if (id != null) _acknowledgeAlert(id.toInt());
+                      },
+                    ),
+                  );
+                }),
+                Align(alignment: Alignment.centerRight, child: TextButton.icon(
+                  onPressed: () {
+                    setState(() => selectedIndex = 8);
+                    _loadPhase2Intelligence();
+                  },
+                  icon: const Icon(Icons.insights_outlined),
+                  label: const Text('View shop insights'),
+                )),
+              ]),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            OutlinedButton.icon(
+              onPressed: () { setState(() => selectedIndex = 5); _loadIntelligenceContext(); },
+              icon: const Icon(Icons.people_outline), label: const Text('Customer khata')),
+            OutlinedButton.icon(
+              onPressed: () { setState(() => selectedIndex = 7); _loadSalesHistory(); loadBackendData(); },
+              icon: const Icon(Icons.bar_chart), label: const Text('Reports')),
+            FilledButton.tonalIcon(
+              onPressed: () { setState(() => selectedIndex = 4); if (_intelligenceSnapshot.isEmpty) _loadPhase2Intelligence(); },
+              icon: const Icon(Icons.auto_awesome), label: const Text('Ask AI')),
+          ]),
+          const SizedBox(height: 20),
 
           const Text(
 
@@ -2085,8 +2146,15 @@ if (showMessage) {
     if (widget.userRole != 'owner') return;
     setState(() => _employeesLoading = true);
     try {
-      final rows = await ApiService.getEmployees();
-      if (mounted) setState(() { _employees = rows; _employeesLoading = false; });
+      final values = await Future.wait([
+        ApiService.getEmployees(),
+        ApiService.getEmployeeInvitations(),
+      ]);
+      if (mounted) setState(() {
+        _employees = values[0];
+        _employeeInvitations = values[1];
+        _employeesLoading = false;
+      });
     } catch (error) {
       if (mounted) {
         setState(() => _employeesLoading = false);
@@ -2118,6 +2186,26 @@ if (showMessage) {
       await _loadEmployees();
     } catch (error) {
       if (mounted) showSnackBar('Invitation failed: $error', isError: true);
+    }
+  }
+
+  Future<void> _revokeEmployeeInvitation(int invitationId) async {
+    try {
+      await ApiService.revokeEmployeeInvitation(invitationId);
+      await _loadEmployees();
+      if (mounted) showSnackBar('Employee invitation cancelled.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not cancel invitation: $error', isError: true);
+    }
+  }
+
+  Future<void> _setEmployeeJobRole(int userId, String jobRole) async {
+    try {
+      await ApiService.setEmployeeJobRole(userId, jobRole);
+      await _loadEmployees();
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update employee role: $error')));
     }
   }
 
@@ -2292,13 +2380,18 @@ if (showMessage) {
 
   Future<void> _receivePurchaseOrder(Map<String, dynamic> order) async {
     final items = (order['items'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
-    final receipt = await showDialog<List<Map<String, dynamic>>>(
+    final receipt = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (dialogContext) => ReceivePurchaseDialog(items: items, products: products),
     );
     if (receipt == null) return;
     try {
-      await ApiService.receivePurchaseOrder((order['purchase_id'] as num).toInt(), receipt);
+      await ApiService.receivePurchaseOrder(
+        (order['purchase_id'] as num).toInt(),
+        (receipt['items'] as List<dynamic>).cast<Map<String, dynamic>>(),
+        invoiceNumber: receipt['invoice_number']?.toString(),
+        invoiceAmount: (receipt['invoice_amount'] as num?)?.toDouble(),
+      );
       await _loadPurchasePlanningData();
       await loadBackendData();
       if (mounted) showSnackBar('Goods receipt saved. Batches require verification before sale.');
@@ -2680,9 +2773,20 @@ if (showMessage) {
               return Card(child: ListTile(
                 leading: const Icon(Icons.local_shipping_outlined),
                 title: Text(order['purchase_order_number']?.toString() ?? 'Purchase order'),
-                subtitle: Text('Status: $status · ₹${order['total_amount']}'),
+                subtitle: Text('Status: $status · ₹${order['total_amount']} · Promised: ${order['expected_delivery_date'] ?? 'not set'}'),
                 trailing: (status == 'ordered' || status == 'confirmed')
-                    ? TextButton(onPressed: () => _receivePurchaseOrder(order), child: const Text('Receive'))
+                    ? Wrap(spacing: 4, children: [
+                        IconButton(
+                          tooltip: 'Set supplier-promised delivery date',
+                          icon: const Icon(Icons.event_available_outlined),
+                          onPressed: () => _setExpectedDeliveryDate(order),
+                        ),
+                        IconButton(
+                          tooltip: 'Receive goods',
+                          icon: const Icon(Icons.inventory),
+                          onPressed: () => _receivePurchaseOrder(order),
+                        ),
+                      ])
                     : const Icon(Icons.check_circle, color: Colors.green),
               ));
             }),
@@ -2824,6 +2928,1000 @@ if (showMessage) {
     }
   }
 
+
+
+  Future<void> _loadIntelligenceContext() async {
+    try {
+      final values = await Future.wait([
+        ApiService.getFestivalCalendar(),
+        ApiService.getAvailabilitySnapshotCoverage(),
+        ApiService.getShopCustomers(),
+        ApiService.getSupplierIssues(status: 'open'),
+        ApiService.getShopSuppliers(),
+        ApiService.getIntelligenceAlerts(),
+        ApiService.getIntelligenceDailySummaries(limit: 7),
+        ApiService.getRecommendationFeedback(limit: 10),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _festivalEvents = values[0] as List<dynamic>;
+        _availabilityCoverage = values[1] as Map<String, dynamic>;
+        _shopCustomers = values[2] as List<dynamic>;
+        _supplierIssues = values[3] as List<dynamic>;
+        _shopSuppliers = values[4] as List<dynamic>;
+        _intelligenceAlerts = values[5] as List<dynamic>;
+        _dailySummaries = values[6] as List<dynamic>;
+        _feedbackHistory = values[7] as List<dynamic>;
+      });
+    } catch (_) {
+      // The primary intelligence response remains usable if optional context
+      // endpoints are temporarily unavailable.
+    }
+  }
+
+  Future<void> _captureAvailabilitySnapshot() async {
+    if (_availabilityCapturing) return;
+    setState(() => _availabilityCapturing = true);
+    try {
+      final result = await ApiService.captureDailyAvailability();
+      await _loadIntelligenceContext();
+      if (mounted) showSnackBar(result['message']?.toString() ?? 'Availability snapshot saved.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not capture availability: $error', isError: true);
+    } finally {
+      if (mounted) setState(() => _availabilityCapturing = false);
+    }
+  }
+
+
+
+
+
+  Future<void> _acknowledgeAlert(int alertId) async {
+    try {
+      await ApiService.acknowledgeIntelligenceAlert(alertId);
+      await _loadIntelligenceContext();
+      if (mounted) showSnackBar('Alert acknowledged.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not acknowledge alert: $error', isError: true);
+    }
+  }
+
+  Future<void> _generateDailySummary() async {
+    try {
+      await ApiService.generateIntelligenceDailySummary();
+      await _loadIntelligenceContext();
+      if (mounted) showSnackBar('Daily intelligence summary generated.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not generate summary: $error', isError: true);
+    }
+  }
+
+  Future<void> _recordRecommendationFeedback() async {
+    if (products.isEmpty) {
+      showSnackBar('Add products before recording recommendation feedback.', isError: true);
+      return;
+    }
+    int selectedProductId = products.first.id;
+    String decision = 'accepted';
+    final actualQty = TextEditingController();
+    final notes = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(builder: (context, updateDialog) =>
+        AlertDialog(
+          title: const Text('Recommendation feedback'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            DropdownButtonFormField<int>(
+              value: selectedProductId,
+              decoration: const InputDecoration(labelText: 'Product'),
+              items: products.map((product) => DropdownMenuItem<int>(
+                value: product.id, child: Text(product.name),
+              )).toList(),
+              onChanged: (value) { if (value != null) updateDialog(() => selectedProductId = value); },
+            ),
+            DropdownButtonFormField<String>(
+              value: decision,
+              decoration: const InputDecoration(labelText: 'Decision'),
+              items: const [
+                DropdownMenuItem(value: 'accepted', child: Text('Accepted')),
+                DropdownMenuItem(value: 'dismissed', child: Text('Dismissed')),
+                DropdownMenuItem(value: 'adjusted', child: Text('Adjusted quantity')),
+              ],
+              onChanged: (value) { if (value != null) updateDialog(() => decision = value); },
+            ),
+            if (decision == 'adjusted')
+              TextField(controller: actualQty,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Actual planned quantity')),
+            TextField(controller: notes, maxLines: 2,
+              decoration: const InputDecoration(labelText: 'Reason / notes (optional)')),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save feedback')),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true) {
+      final product = products.firstWhere((item) => item.id == selectedProductId);
+      Map<String, dynamic>? recommendation;
+      for (final item in restockRecommendations) {
+        if ((item['product_id'] as num?)?.toInt() == selectedProductId) {
+          recommendation = item;
+          break;
+        }
+      }
+      final recommendedQty = recommendation == null
+          ? null
+          : _recommendationNumber(recommendation['suggested_quantity']);
+      final actual = double.tryParse(actualQty.text.trim());
+      if (decision == 'adjusted' && (actual == null || actual < 0)) {
+        if (mounted) showSnackBar('Enter a valid actual quantity.', isError: true);
+      } else {
+        try {
+          await ApiService.submitRecommendationFeedback(
+            recommendationKey: 'reorder:$selectedProductId:${DateTime.now().toIso8601String().substring(0, 10)}',
+            decision: decision,
+            productId: product.id,
+            recommendedQuantity: recommendedQty,
+            actualQuantity: decision == 'adjusted' ? actual : null,
+            notes: notes.text.trim().isEmpty ? null : notes.text.trim(),
+          );
+          await _loadIntelligenceContext();
+          if (mounted) showSnackBar('Recommendation feedback saved.');
+        } catch (error) {
+          if (mounted) showSnackBar('Could not save feedback: $error', isError: true);
+        }
+      }
+    }
+    actualQty.dispose();
+    notes.dispose();
+  }
+
+  Future<void> _reportSupplierIssue() async {
+    if (_shopSuppliers.isEmpty) {
+      try {
+        _shopSuppliers = await ApiService.getShopSuppliers();
+      } catch (_) {}
+    }
+    if (_shopSuppliers.isEmpty) {
+      if (mounted) showSnackBar('Connect a supplier before recording an issue.', isError: true);
+      return;
+    }
+    if (!mounted) return;
+    int selectedSupplier = (_shopSuppliers.first['supplier_id'] as num).toInt();
+    String severity = 'medium';
+    final type = TextEditingController();
+    final description = TextEditingController();
+    final purchaseIdText = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(builder: (context, updateDialog) =>
+        AlertDialog(
+          title: const Text('Report supplier issue'),
+          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            DropdownButtonFormField<int>(
+              value: selectedSupplier,
+              decoration: const InputDecoration(labelText: 'Supplier'),
+              items: _shopSuppliers.map((raw) {
+                final supplier = raw as Map<String, dynamic>;
+                return DropdownMenuItem<int>(
+                  value: (supplier['supplier_id'] as num).toInt(),
+                  child: Text(supplier['name'].toString()),
+                );
+              }).toList(),
+              onChanged: (value) { if (value != null) updateDialog(() => selectedSupplier = value); },
+            ),
+            TextField(controller: type, decoration: const InputDecoration(labelText: 'Issue type (short label)')),
+            TextField(controller: description, maxLines: 3,
+              decoration: const InputDecoration(labelText: 'Describe the issue')),
+            TextField(controller: purchaseIdText, keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Related purchase ID (optional)')),
+            DropdownButtonFormField<String>(
+              value: severity,
+              decoration: const InputDecoration(labelText: 'Severity'),
+              items: const [
+                DropdownMenuItem(value: 'low', child: Text('Low')),
+                DropdownMenuItem(value: 'medium', child: Text('Medium')),
+                DropdownMenuItem(value: 'high', child: Text('High')),
+                DropdownMenuItem(value: 'critical', child: Text('Critical')),
+              ],
+              onChanged: (value) { if (value != null) updateDialog(() => severity = value); },
+            ),
+          ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save issue')),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (accepted == true && type.text.trim().isNotEmpty && description.text.trim().isNotEmpty) {
+      try {
+        await ApiService.createSupplierIssue(
+          supplierId: selectedSupplier,
+          purchaseId: int.tryParse(purchaseIdText.text.trim()),
+          issueType: type.text.trim(),
+          description: description.text.trim(), severity: severity);
+        await _loadIntelligenceContext();
+        if (mounted) showSnackBar('Supplier issue recorded.');
+      } catch (error) {
+        if (mounted) showSnackBar('Could not record supplier issue: $error', isError: true);
+      }
+    }
+    type.dispose();
+    description.dispose();
+    purchaseIdText.dispose();
+  }
+
+  Future<void> _resolveSupplierIssue(int issueId) async {
+    try {
+      await ApiService.resolveSupplierIssue(issueId);
+      await _loadIntelligenceContext();
+      if (mounted) showSnackBar('Supplier issue marked resolved.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not resolve supplier issue: $error', isError: true);
+    }
+  }
+
+
+  Future<void> _assignLegacyCustomer() async {
+    final customerId = int.tryParse(_legacyCustomerIdController.text.trim());
+    if (customerId == null || customerId <= 0) {
+      showSnackBar('Enter a valid legacy customer ID.', isError: true);
+      return;
+    }
+    try {
+      await ApiService.assignLegacyCustomerToShop(customerId);
+      _legacyCustomerIdController.clear();
+      await _loadIntelligenceContext();
+      await _loadPhase2Intelligence();
+      if (mounted) showSnackBar('Legacy customer assigned to this shop.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not assign customer: $error', isError: true);
+    }
+  }
+
+  Future<void> _createKhataCustomer() async {
+    final name = TextEditingController();
+    final phone = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Add shop customer'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: name, decoration: const InputDecoration(labelText: 'Customer name')),
+          TextField(controller: phone, keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(labelText: 'Phone (optional)')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save customer')),
+        ],
+      ),
+    );
+    if (accepted == true && name.text.trim().isNotEmpty) {
+      try {
+        await ApiService.createShopCustomer({'name': name.text.trim(), 'phone': phone.text.trim()});
+        await _loadIntelligenceContext();
+        if (mounted) showSnackBar('Customer added to this shop.');
+      } catch (error) {
+        if (mounted) showSnackBar('Could not add customer: $error', isError: true);
+      }
+    }
+    name.dispose();
+    phone.dispose();
+  }
+
+  Future<void> _addKhataEntry(int customerId) async {
+    final amount = TextEditingController();
+    String kind = 'credit';
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(builder: (context, updateDialog) =>
+        AlertDialog(
+          title: const Text('Record khata transaction'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            DropdownButtonFormField<String>(
+              value: kind,
+              decoration: const InputDecoration(labelText: 'Transaction'),
+              items: const [
+                DropdownMenuItem(value: 'credit', child: Text('New credit / udhar')),
+                DropdownMenuItem(value: 'repayment', child: Text('Customer repayment')),
+              ],
+              onChanged: (value) { if (value != null) updateDialog(() => kind = value); },
+            ),
+            TextField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Amount (INR)')),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save')),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true) {
+      final value = double.tryParse(amount.text.trim());
+      if (value == null || value <= 0) {
+        if (mounted) showSnackBar('Enter a valid positive amount.', isError: true);
+      } else {
+        try {
+          await ApiService.addShopKhataTransaction(customerId, {
+            'transaction_type': kind, 'amount': value,
+          });
+          if (mounted) showSnackBar('Khata transaction recorded.');
+          await _openKhataLedger(customerId);
+        } catch (error) {
+          if (mounted) showSnackBar('Could not record khata transaction: $error', isError: true);
+        }
+      }
+    }
+    amount.dispose();
+  }
+
+  Future<void> _openKhataLedger(int customerId) async {
+    try {
+      final ledger = await ApiService.getShopKhataLedger(customerId);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(ledger['customer_name']?.toString() ?? 'Customer khata'),
+          content: SizedBox(width: 520, child: SingleChildScrollView(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Outstanding: ₹${ledger['outstanding_amount'] ?? 0}',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              ...(ledger['transactions'] as List? ?? []).map((raw) {
+                final tx = raw as Map<String, dynamic>;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('${tx['transaction_type']} · ₹${tx['amount']}'),
+                  subtitle: Text(tx['created_at']?.toString() ?? ''),
+                  trailing: Text('₹${tx['running_balance']}'),
+                );
+              }),
+            ]),
+          )),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close')),
+            FilledButton(onPressed: () {
+              Navigator.pop(dialogContext);
+              _addKhataEntry(customerId);
+            }, child: const Text('Add transaction')),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (mounted) showSnackBar('Could not load customer ledger: $error', isError: true);
+    }
+  }
+
+  Future<void> _setExpectedDeliveryDate(Map<String, dynamic> order) async {
+    final purchaseId = (order['purchase_id'] as num?)?.toInt();
+    if (purchaseId == null) return;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now().add(const Duration(days: 3)),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (picked == null) return;
+    try {
+      await ApiService.setExpectedSupplierDeliveryDate(
+        purchaseId, picked.toIso8601String().split('T').first);
+      await _loadPurchasePlanningData();
+      if (mounted) showSnackBar('Supplier-promised delivery date saved.');
+    } catch (error) {
+      if (mounted) showSnackBar('Could not save delivery date: $error', isError: true);
+    }
+  }
+
+  Future<void> _configureShopLocation() async {
+    final city = TextEditingController();
+    final state = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Shop location'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: city, decoration: const InputDecoration(labelText: 'City')),
+          TextField(controller: state, decoration: const InputDecoration(labelText: 'State')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save location')),
+        ],
+      ),
+    );
+    if (accepted == true && city.text.trim().isNotEmpty && state.text.trim().isNotEmpty) {
+      try {
+        await ApiService.updateShopIntelligenceSettings(
+          city: city.text.trim(), state: state.text.trim());
+        if (mounted) showSnackBar('Shop location saved for local intelligence.');
+      } catch (error) {
+        if (mounted) showSnackBar('Could not save shop location: $error', isError: true);
+      }
+    }
+    city.dispose();
+    state.dispose();
+  }
+
+  Future<void> _addFestivalEvent() async {
+    final nameController = TextEditingController();
+    DateTime selectedDate = DateTime.now();
+    String eventType = 'festival';
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(builder: (context, updateDialog) =>
+        AlertDialog(
+          title: const Text('Add local festival or event'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: nameController,
+              decoration: const InputDecoration(labelText: 'Event name')),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: eventType,
+              decoration: const InputDecoration(labelText: 'Event type'),
+              items: const [
+                DropdownMenuItem(value: 'festival', child: Text('Festival')),
+                DropdownMenuItem(value: 'local_event', child: Text('Local event')),
+                DropdownMenuItem(value: 'promotion', child: Text('Promotion')),
+                DropdownMenuItem(value: 'market_day', child: Text('Market day')),
+              ],
+              onChanged: (value) { if (value != null) updateDialog(() => eventType = value); },
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.calendar_month),
+              label: Text('Date: ${selectedDate.toIso8601String().split('T').first}'),
+              onPressed: () async {
+                final picked = await showDatePicker(
+                  context: dialogContext,
+                  initialDate: selectedDate,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime(2040),
+                );
+                if (picked != null) updateDialog(() => selectedDate = picked);
+              },
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save event')),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true && nameController.text.trim().isNotEmpty) {
+      try {
+        await ApiService.addFestivalEvent(
+          name: nameController.text.trim(),
+          eventDate: selectedDate.toIso8601String().split('T').first,
+          eventType: eventType,
+        );
+        await _loadIntelligenceContext();
+        if (mounted) showSnackBar('Local event saved to the shop calendar.');
+      } catch (error) {
+        if (mounted) showSnackBar('Could not save event: $error', isError: true);
+      }
+    }
+    nameController.dispose();
+  }
+
+  Future<void> _compareFestivalEvent(Map<String, dynamic> event) async {
+    final eventId = (event['event_id'] as num?)?.toInt();
+    if (eventId == null) return;
+    try {
+      final result = await ApiService.compareSavedFestivalEvent(eventId);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('${event['name']} demand comparison'),
+          content: SizedBox(width: 520, child: SingleChildScrollView(
+            child: SelectableText(const JsonEncoder.withIndent('  ').convert(result)),
+          )),
+          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))],
+        ),
+      );
+    } catch (error) {
+      if (mounted) showSnackBar('Event comparison unavailable: $error', isError: true);
+    }
+  }
+
+  Future<void> _loadPhase2Intelligence({bool showMessage = false}) async {
+    if (_intelligenceLoading) return;
+    setState(() {
+      _intelligenceLoading = true;
+      _intelligenceError = null;
+    });
+    try {
+      final result = await ApiService.getPhase2IntelligenceSnapshot();
+      if (!mounted) return;
+      setState(() {
+        _intelligenceSnapshot = result;
+        _intelligenceLoading = false;
+      });
+      await _loadIntelligenceContext();
+      if (showMessage) showSnackBar('Intelligence refreshed.');
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _intelligenceError = error.toString();
+        _intelligenceLoading = false;
+      });
+      if (showMessage) showSnackBar('Intelligence refresh failed: $error', isError: true);
+    }
+  }
+
+  Widget _intelligenceMetric(String title, String value, IconData icon) {
+    return Card(child: ListTile(
+      leading: Icon(icon, color: const Color(0xFF16845B)),
+      title: Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+      subtitle: Text(title),
+    ));
+  }
+
+  String _intelligenceLabel(String value) {
+    return value.replaceAll('_', ' ').split(' ').where((part) => part.isNotEmpty)
+        .map((part) => part[0].toUpperCase() + part.substring(1)).join(' ');
+  }
+
+  String _intelligenceDisplayValue(dynamic value) {
+    if (value == null) return 'Not available';
+    if (value is bool) return value ? 'Yes' : 'No';
+    if (value is double) return value.toStringAsFixed(2);
+    return value.toString();
+  }
+
+  String _intelligenceDescription(String key) {
+    switch (key.toLowerCase()) {
+      case 'expiry': return 'Products that are expired or approaching their expiry date.';
+      case 'dead_stock': return 'Products that have not been selling and may be tying up your money.';
+      case 'stockout': return 'Products that may run out soon and need restocking attention.';
+      case 'forecast': return 'Estimated future demand based on the sales history available.';
+      case 'seasonal': return 'Products whose demand may change with seasons or local events.';
+      case 'event_demand': return 'Demand patterns around the selected festival or local event.';
+      case 'reorder_recommendations': return 'Suggested products and quantities to consider buying.';
+      case 'supplier_prices': return 'Supplier price information that can help compare buying options.';
+      case 'supplier_performance': return 'Delivery and supply reliability based on recorded purchase history.';
+      case 'suppliers': return 'Suppliers currently connected to this shop.';
+      case 'financial_position': return 'A shop-level view of cash, credit and outstanding amounts.';
+      case 'inventory': return 'A summary of current stock and inventory movement.';
+      default: return 'A shop insight based on the information recorded so far.';
+    }
+  }
+
+  String _intelligenceAction(String key) {
+    switch (key.toLowerCase()) {
+      case 'expiry': return 'What to do: Check the listed batches first. Prioritise already-expired items and items expiring soon.';
+      case 'dead_stock': return 'What to do: Review these products before ordering more. Consider a promotion or a smaller future purchase.';
+      case 'stockout': return 'What to do: Check shelf and back-room stock, then consider restocking the products at risk.';
+      case 'forecast': return 'What to do: Use this as a planning estimate, compare it with recent sales, and adjust for local demand.';
+      case 'seasonal': return 'What to do: Prepare early for products with rising seasonal or festival demand.';
+      case 'event_demand': return 'What to do: Compare the event period with normal sales before deciding how much extra stock to buy.';
+      case 'reorder_recommendations': return 'What to do: Review the suggested quantities and your purchase budget. This does not place an order.';
+      case 'supplier_prices': return 'What to do: Compare prices, quality and delivery terms before choosing a supplier.';
+      case 'supplier_performance': return 'What to do: Review late or short deliveries before placing your next order.';
+      case 'suppliers': return 'What to do: Connect suppliers in Purchasing or Settings to unlock supplier comparisons.';
+      case 'financial_position': return 'What to do: Review outstanding customer credit and upcoming payments before committing cash.';
+      default: return 'What to do: Open the insight and review the evidence before taking action.';
+    }
+  }
+
+  String _intelligenceSummary(Map<String, dynamic> data) {
+    final status = data['status'];
+    if (status != null) return _intelligenceLabel(status.toString());
+    for (final key in ['batches', 'items', 'products', 'recommendations', 'risks']) {
+      final rows = data[key];
+      if (rows is List) return rows.isEmpty ? 'Nothing needs attention right now' : '${rows.length} ${_intelligenceLabel(key).toLowerCase()} to review';
+    }
+    final count = data['count'];
+    if (count is num) return count == 0 ? 'No matching records yet' : '$count results';
+    if (data['message'] != null) return data['message'].toString();
+    return 'Open to review this insight';
+  }
+
+  Widget _intelligenceResultCard(String key, dynamic value) {
+    final data = value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{'result': value};
+    const hiddenKeys = {'shop_id', 'product_id', 'supplier_id', 'batch_id', 'count', 'limitations', 'analysis', 'status', 'message', 'generated_at', 'as_of_date'};
+    final highlights = data.entries.where((entry) => entry.value != null && entry.value is! Map && entry.value is! List && !hiddenKeys.contains(entry.key)).take(4).toList();
+    final listEntries = data.entries.where((entry) => entry.value is List && (entry.value as List).isNotEmpty).toList();
+    return Card(clipBehavior: Clip.antiAlias, child: ExpansionTile(
+      leading: const Icon(Icons.auto_awesome_outlined),
+      title: Text(_intelligenceLabel(key), style: const TextStyle(fontWeight: FontWeight.w600)),
+      subtitle: Text(_intelligenceSummary(data)),
+      children: [
+        Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 8), child: Align(alignment: Alignment.centerLeft, child: Text(_intelligenceDescription(key)))),
+        if (highlights.isNotEmpty) Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 8), child: Wrap(
+          spacing: 8, runSpacing: 8,
+          children: highlights.map((entry) => Chip(label: Text('${_intelligenceLabel(entry.key)}: ${_intelligenceDisplayValue(entry.value)}'))).toList(),
+        )),
+        ...listEntries.expand((entry) {
+          final rows = entry.value as List;
+          return [
+            Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 4), child: Align(alignment: Alignment.centerLeft, child: Text(_intelligenceLabel(entry.key), style: const TextStyle(fontWeight: FontWeight.w600)))),
+            ...rows.take(8).map((raw) {
+              if (raw is! Map) return ListTile(dense: true, title: Text(raw.toString()));
+              final row = Map<String, dynamic>.from(raw);
+              const rowHidden = {'id', 'product_id', 'supplier_id', 'batch_id', 'shop_id'};
+              final visible = row.entries.where((item) => item.value != null && item.value is! Map && item.value is! List && !rowHidden.contains(item.key)).take(3).toList();
+              final title = row['product_name'] ?? row['name'] ?? row['title'] ?? row['batch_number'] ?? 'Item to review';
+              final subtitle = visible.where((item) => item.key != 'product_name' && item.key != 'name' && item.key != 'title' && item.key != 'batch_number').map((item) => '${_intelligenceLabel(item.key)}: ${_intelligenceDisplayValue(item.value)}').join(' · ');
+              return ListTile(dense: true, leading: const Icon(Icons.inventory_2_outlined), title: Text(title.toString()), subtitle: subtitle.isEmpty ? null : Text(subtitle));
+            }),
+            if (rows.length > 8) Padding(padding: const EdgeInsets.all(12), child: Text('Showing 8 of ${rows.length} items.')),
+          ];
+        }),
+        Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 16), child: Align(alignment: Alignment.centerLeft, child: Text(_intelligenceAction(key), style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w500)))),
+      ],
+    ));
+  }
+
+  Widget buildIntelligence() {
+    final results = _intelligenceSnapshot['results'];
+    final specialistResults = results is Map<String, dynamic>
+        ? results
+        : <String, dynamic>{};
+    final evidence = _intelligenceSnapshot['evidence_summary'];
+    final safety = _intelligenceSnapshot['safety'];
+
+    return RefreshIndicator(
+      onRefresh: () => _loadPhase2Intelligence(),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text('Shop Intelligence',
+            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          const Text('Simple advice to help you decide what to stock, sell and buy.'),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(children: [
+                    Icon(Icons.lightbulb_outline),
+                    SizedBox(width: 8),
+                    Text('How to use your shop agents',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                  ]),
+                  const SizedBox(height: 8),
+                  const Text('1. Tap Refresh intelligence to update your shop insights.'),
+                  const SizedBox(height: 4),
+                  const Text('2. Open an insight such as Expiry, Stockout or Reorder to see which products need attention and what you can do.'),
+                  const SizedBox(height: 4),
+                  const Text('3. Tap Talk to AI to ask a question in your own words.'),
+                  const SizedBox(height: 10),
+                  const Text('Try asking:',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  const Text('“Which products should I reorder today?”'),
+                  const Text('“What is expiring soon?”'),
+                  const Text('“Which products are not selling?”'),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          FilledButton.icon(
+            onPressed: _intelligenceLoading ? null : () => _loadPhase2Intelligence(showMessage: true),
+            icon: const Icon(Icons.insights),
+            label: Text(_intelligenceLoading ? 'Refreshing intelligence…' : 'Refresh intelligence'),
+          ),
+          if (_intelligenceLoading) const LinearProgressIndicator(),
+          if (_intelligenceError != null)
+            Card(color: Theme.of(context).colorScheme.errorContainer,
+              child: Padding(padding: const EdgeInsets.all(14),
+                child: Text('Could not load intelligence: $_intelligenceError'))),
+          if (evidence is Map) ...[
+            const SizedBox(height: 12),
+            _intelligenceMetric('Specialist results', '${evidence['specialist_result_count'] ?? 0}', Icons.hub_outlined),
+            if (evidence['partial'] == true)
+              const Text('Some specialists need more event parameters or recorded evidence.',
+                style: TextStyle(color: Colors.orange)),
+          ],
+
+
+
+          const SizedBox(height: 16),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Supplier issues',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              const Text('Record delivery, quality, short-supply or invoice issues. Linked purchase issues contribute to supplier issue-rate evidence.'),
+              Align(alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _reportSupplierIssue,
+                  icon: const Icon(Icons.report_problem_outlined),
+                  label: const Text('Report issue'),
+                )),
+              if (_supplierIssues.isEmpty)
+                const Text('No open supplier issues.'),
+              ..._supplierIssues.take(6).map((raw) {
+                final issue = raw as Map<String, dynamic>;
+                final id = (issue['issue_id'] as num).toInt();
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(issue['issue_type']?.toString() ?? 'Supplier issue'),
+                  subtitle: Text('${issue['severity']} · ${issue['description']}'),
+                  trailing: IconButton(
+                    tooltip: 'Resolve issue',
+                    icon: const Icon(Icons.check_circle_outline),
+                    onPressed: () => _resolveSupplierIssue(id),
+                  ),
+                );
+              }),
+            ],
+          ))),
+          const SizedBox(height: 16),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Customer khata',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              const Text('Shop-scoped customer credit and repayment ledger. Historical unassigned customers are excluded until an owner assigns them.'),
+              Align(alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _createKhataCustomer,
+                  icon: const Icon(Icons.person_add_alt_1),
+                  label: const Text('Add customer'),
+                )),
+              if (_shopCustomers.isEmpty)
+                const Text('No shop customers yet.'),
+              ..._shopCustomers.take(8).map((raw) {
+                final customer = raw as Map<String, dynamic>;
+                final id = (customer['customer_id'] as num).toInt();
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.person_outline),
+                  title: Text(customer['name']?.toString() ?? 'Customer'),
+                  subtitle: Text(customer['phone']?.toString() ?? 'No phone recorded'),
+                  trailing: IconButton(
+                    tooltip: 'View khata ledger',
+                    icon: const Icon(Icons.receipt_long_outlined),
+                    onPressed: () => _openKhataLedger(id),
+                  ),
+                );
+              }),
+              if (widget.userRole == 'owner') ...[
+                const Divider(),
+                const Text('Assign an existing legacy customer'),
+                const SizedBox(height: 6),
+                Row(children: [
+                  Expanded(child: TextField(
+                    controller: _legacyCustomerIdController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Legacy customer ID',
+                      border: OutlineInputBorder(),
+                    ),
+                  )),
+                  const SizedBox(width: 8),
+                  FilledButton.tonal(
+                    onPressed: _assignLegacyCustomer,
+                    child: const Text('Assign'),
+                  ),
+                ]),
+              ],
+            ],
+          ))),
+          const SizedBox(height: 16),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Availability evidence',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              const Text('Capture today’s saleable batch stock. Repeated daily snapshots help the forecast distinguish low sales from stockout days.'),
+              const SizedBox(height: 10),
+              FilledButton.tonalIcon(
+                onPressed: _availabilityCapturing ? null : _captureAvailabilitySnapshot,
+                icon: const Icon(Icons.camera_alt_outlined),
+                label: Text(_availabilityCapturing ? 'Capturing…' : 'Capture today’s availability'),
+              ),
+              if ((_availabilityCoverage['days'] as List?)?.isNotEmpty == true)
+                Text('${(_availabilityCoverage['days'] as List).length} recorded snapshot dates'),
+            ],
+          ))),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Local festival calendar',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              const Text('Add local events for later comparison with your shop’s recorded sales.'),
+              if (widget.userRole == 'owner')
+                Align(alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: _addFestivalEvent,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add event'),
+                  )),
+              if (widget.userRole == 'owner')
+                Align(alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: _configureShopLocation,
+                    icon: const Icon(Icons.location_on_outlined),
+                    label: const Text('Set shop location'),
+                  )),
+              if (_festivalEvents.isEmpty)
+                const Text('No local events saved yet.'),
+              ..._festivalEvents.take(8).map((raw) {
+                final event = raw as Map<String, dynamic>;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(event['name']?.toString() ?? 'Event'),
+                  subtitle: Text('${event['event_date'] ?? ''} · ${event['event_type'] ?? 'festival'}'),
+                  trailing: IconButton(
+                    tooltip: 'Compare recorded demand',
+                    icon: const Icon(Icons.query_stats),
+                    onPressed: () => _compareFestivalEvent(event),
+                  ),
+                );
+              }),
+            ],
+          ))),
+
+          const SizedBox(height: 16),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                const Expanded(child: Text('Daily intelligence summary',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold))),
+                if (widget.userRole == 'owner')
+                  IconButton(
+                    tooltip: 'Generate summary now',
+                    onPressed: _generateDailySummary,
+                    icon: const Icon(Icons.summarize_outlined),
+                  ),
+              ]),
+              if (_dailySummaries.isEmpty)
+                const Text('No daily summary has been generated yet. Configure the scheduled job or generate one as the shop owner.'),
+              ..._dailySummaries.take(3).map((raw) {
+                final summary = raw as Map<String, dynamic>;
+                final payload = summary['payload'] as Map<String, dynamic>? ?? {};
+                final expiry = payload['expiry'] as Map<String, dynamic>? ?? {};
+                final stockout = payload['stockout'] as Map<String, dynamic>? ?? {};
+                final risks = stockout['summary'] as Map<String, dynamic>? ?? {};
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(summary['summary_date']?.toString() ?? 'Daily summary'),
+                  subtitle: Text('Expiry exposure ₹${expiry['estimated_cost_exposure'] ?? 0} · Stockout risks ${risks['stockout'] ?? 0}'),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.open_in_new),
+                    onPressed: () => showDialog<void>(
+                      context: context,
+                      builder: (dialogContext) => AlertDialog(
+                        title: Text('Summary ${summary['summary_date']}'),
+                        content: SizedBox(width: 520, child: SingleChildScrollView(
+                          child: SelectableText(const JsonEncoder.withIndent('  ').convert(payload)),
+                        )),
+                        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))],
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ))),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Actionable alerts (${_intelligenceAlerts.length})',
+                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              if (_intelligenceAlerts.isEmpty)
+                const Text('No open intelligence alerts.'),
+              ..._intelligenceAlerts.take(8).map((raw) {
+                final alert = raw as Map<String, dynamic>;
+                final id = (alert['alert_id'] as num).toInt();
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(alert['title']?.toString() ?? 'Alert'),
+                  subtitle: Text('${alert['severity']} · ${alert['message']}'),
+                  trailing: IconButton(
+                    tooltip: 'Acknowledge alert',
+                    icon: const Icon(Icons.done),
+                    onPressed: () => _acknowledgeAlert(id),
+                  ),
+                );
+              }),
+            ],
+          ))),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Recommendation feedback',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const Text('Record whether a reorder suggestion was accepted, dismissed or adjusted.'),
+              Align(alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _recordRecommendationFeedback,
+                  icon: const Icon(Icons.rate_review_outlined),
+                  label: const Text('Record feedback'),
+                )),
+              if (_feedbackHistory.isNotEmpty)
+                Text('${_feedbackHistory.length} recent feedback records available'),
+            ],
+          ))),
+          if (specialistResults.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ...specialistResults.entries.map((entry) => _intelligenceResultCard(entry.key, entry.value)),
+          ] else if (!_intelligenceLoading && _intelligenceError == null)
+            const Card(child: Padding(padding: EdgeInsets.all(16),
+              child: Text('Tap Refresh intelligence to load expiry, dead stock, stockout, seasonal, supplier and financial insights.'))),
+          if (safety is Map) ...[
+            const SizedBox(height: 8),
+            Card(child: ListTile(
+              leading: const Icon(Icons.verified_user_outlined),
+              title: const Text('Safety'),
+              subtitle: Text('Read-only: ${safety['read_only'] == true ? 'yes' : 'no'} · Purchase orders created: ${safety['purchase_orders_created'] == true ? 'yes' : 'no'}'),
+            )),
+          ],
+          const SizedBox(height: 8),
+          const Text('Data gaps are reported explicitly. Festival comparisons need an event date; supplier reliability metrics need promised delivery and receipt quantities.',
+            style: TextStyle(fontSize: 12, color: Colors.black54)),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _askPresetQuestion(String question) async {
+    _aiQuestionController.text = question;
+    await _askInventoryAi();
+  }
+
+  String _humanizeIntelligenceKey(String key) {
+    final spaced = key.replaceAll('_', ' ').replaceAll('-', ' ');
+    return spaced.isEmpty ? key : spaced[0].toUpperCase() + spaced.substring(1);
+  }
+
+  String _friendlyAgentResponse(dynamic value) {
+    final lines = <String>[];
+    void visit(dynamic item, [String? heading]) {
+      if (item == null) return;
+      if (item is Map) {
+        for (final entry in item.entries) {
+          final key = entry.key.toString();
+          if (const {'debug', 'trace', 'raw', 'metadata', 'safety', 'evidence_summary'}.contains(key)) continue;
+          visit(entry.value, _humanizeIntelligenceKey(key));
+        }
+      } else if (item is List) {
+        if (item.isEmpty) {
+          if (heading != null) lines.add('$heading: Nothing needs attention right now.');
+        } else {
+          if (heading != null) lines.add('$heading:');
+          for (final child in item.take(8)) {
+            if (child is Map) {
+              final parts = child.entries.where((entry) => entry.value != null && entry.value is! Map && entry.value is! List)
+                .take(4).map((entry) => '${_humanizeIntelligenceKey(entry.key.toString())}: ${entry.value}').join(' · ');
+              if (parts.isNotEmpty) lines.add('• $parts');
+            } else {
+              lines.add('• $child');
+            }
+          }
+        }
+      } else if (heading != null) {
+        lines.add('$heading: $item');
+      }
+    }
+    visit(value);
+    return lines.isEmpty
+      ? 'I checked the available shop information. Try asking about expiry, low stock, slow-moving products or what to reorder.'
+      : lines.take(24).join('\n');
+  }
+
   Future<void> _askInventoryAi() async {
     final question = _aiQuestionController.text.trim();
     if (question.isEmpty || _aiLoading) return;
@@ -2834,7 +3932,7 @@ if (showMessage) {
     });
     try {
       final response = await ApiService.getInventoryAgentAnswer(question);
-      final resultText = const JsonEncoder.withIndent('  ').convert(response['results'] ?? response);
+      final resultText = _friendlyAgentResponse(response['results'] ?? response);
       if (mounted) setState(() {
         _aiMessages.add({'role': 'assistant', 'text': resultText});
         _aiLoading = false;
@@ -2938,6 +4036,16 @@ if (showMessage) {
     );
   }
 
+  Widget _assistantShortcut(String label, IconData icon, String question) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ActionChip(
+        avatar: Icon(icon, size: 18), label: Text(label),
+        onPressed: _aiLoading ? null : () => _askPresetQuestion(question),
+      ),
+    );
+  }
+
   Widget buildAiAssistant() {
     return Column(children: [
       const Padding(padding: EdgeInsets.fromLTRB(20, 20, 20, 8),
@@ -2945,7 +4053,20 @@ if (showMessage) {
           style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold)))),
       const Padding(padding: EdgeInsets.symmetric(horizontal: 20),
         child: Align(alignment: Alignment.centerLeft,
-          child: Text('Read-only inventory, sales and purchasing insights.'))),
+          child: Text('Ask in everyday words. Choose a shortcut or type your own question.'))),
+      SizedBox(height: 88, child: ListView(
+        scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 12),
+        children: [
+          _assistantShortcut('Expiry check', Icons.event_busy, 'Which products are expiring soon?'),
+          _assistantShortcut('Slow sellers', Icons.hourglass_bottom, 'Which products are not selling and may be dead stock?'),
+          _assistantShortcut('Low stock', Icons.inventory_2_outlined, 'Which products may run out soon?'),
+          _assistantShortcut('Sales forecast', Icons.trending_up, 'Forecast demand for my products.'),
+          _assistantShortcut('Festival demand', Icons.celebration, 'What products should I prepare for upcoming festivals?'),
+          _assistantShortcut('What to buy', Icons.shopping_cart_outlined, 'What should I reorder now and why?'),
+          _assistantShortcut('Suppliers', Icons.local_shipping_outlined, 'Compare my suppliers and show supplier issues.'),
+          _assistantShortcut('Money position', Icons.account_balance_wallet_outlined, 'Explain my shop financial position and purchase budget.'),
+        ],
+      )),
       Expanded(child: ListView.builder(
         padding: const EdgeInsets.all(16),
         itemCount: _aiMessages.length,
@@ -2984,6 +4105,143 @@ if (showMessage) {
         ]),
       )),
     ]);
+  }
+
+  Widget buildMore() {
+    final entries = <({String title, String subtitle, IconData icon, int page})>[
+      (title: 'AI Assistant', subtitle: 'Ask questions and use your shop agents', icon: Icons.auto_awesome, page: 4),
+      (title: 'Customer khata', subtitle: 'Customer balances, credit and repayments', icon: Icons.people_outline, page: 5),
+      (title: 'Supplier issues', subtitle: 'Report and resolve delivery or quality issues', icon: Icons.report_problem_outlined, page: 6),
+      (title: 'Reports', subtitle: 'Sales activity and stock position', icon: Icons.bar_chart, page: 7),
+      (title: 'Shop intelligence', subtitle: 'Detailed alerts, festivals and daily insights', icon: Icons.insights_outlined, page: 8),
+      (title: 'Settings', subtitle: 'Shop, staff and account settings', icon: Icons.settings_outlined, page: 10),
+    ];
+    return ListView(padding: const EdgeInsets.all(20), children: [
+      const Text('More', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+      const SizedBox(height: 6), const Text('All your shop tools in one place.'),
+      const SizedBox(height: 12),
+      ...entries.map((entry) => Card(child: ListTile(
+        leading: Icon(entry.icon, color: const Color(0xFF16845B)),
+        title: Text(entry.title), subtitle: Text(entry.subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () {
+          setState(() => selectedIndex = entry.page);
+          if (entry.page == 4 || entry.page == 8) _loadPhase2Intelligence();
+          if (entry.page == 5 || entry.page == 6) _loadIntelligenceContext();
+          if (entry.page == 7) { _loadSalesHistory(); loadBackendData(); }
+          if (entry.page == 10 && widget.userRole == 'owner') _loadEmployees();
+        },
+      ))),
+    ]);
+  }
+
+  Widget buildCustomers() {
+    return RefreshIndicator(
+      onRefresh: _loadIntelligenceContext,
+      child: ListView(padding: const EdgeInsets.all(20), children: [
+        const Text('Customer khata', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6), const Text('See who has a balance, record credit and add repayments.'),
+        const SizedBox(height: 12),
+        Align(alignment: Alignment.centerRight, child: FilledButton.icon(
+          onPressed: _createKhataCustomer, icon: const Icon(Icons.person_add_alt_1),
+          label: const Text('Add customer'))),
+        if (widget.userRole == 'owner') ExpansionTile(
+          title: const Text('Add an existing customer to this shop'),
+          children: [
+            TextField(controller: _legacyCustomerIdController, keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Existing customer number')),
+            Align(alignment: Alignment.centerRight, child: TextButton(
+              onPressed: _assignLegacyCustomer, child: const Text('Add to shop'))),
+          ],
+        ),
+        if (_shopCustomers.isEmpty) const Card(child: Padding(
+          padding: EdgeInsets.all(18), child: Text('No customers yet. Add your first customer to start a khata.'))),
+        ..._shopCustomers.map((raw) {
+          final customer = raw as Map<String, dynamic>;
+          final id = (customer['customer_id'] as num).toInt();
+          return Card(child: ListTile(
+            leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+            title: Text(customer['name']?.toString() ?? 'Customer'),
+            subtitle: Text('${customer['phone'] ?? 'Phone not added'} · Due ₹${customer['outstanding_amount'] ?? customer['balance'] ?? 0}'),
+            trailing: const Icon(Icons.receipt_long_outlined),
+            onTap: () => _openKhataLedger(id),
+          ));
+        }),
+      ]),
+    );
+  }
+
+  Widget buildSupplierIssues() {
+    return RefreshIndicator(
+      onRefresh: _loadIntelligenceContext,
+      child: ListView(padding: const EdgeInsets.all(20), children: [
+        const Text('Supplier issues', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
+        const Text('Keep track of late deliveries, missing goods, quality and invoice problems.'),
+        const SizedBox(height: 12),
+        Align(alignment: Alignment.centerRight, child: FilledButton.icon(
+          onPressed: _reportSupplierIssue, icon: const Icon(Icons.add), label: const Text('Report an issue'))),
+        if (_supplierIssues.isEmpty) const Card(child: Padding(
+          padding: EdgeInsets.all(18), child: Text('No open supplier issues.'))),
+        ..._supplierIssues.map((raw) {
+          final issue = raw as Map<String, dynamic>;
+          final id = (issue['issue_id'] as num).toInt();
+          return Card(child: ListTile(
+            leading: const Icon(Icons.report_problem_outlined, color: Colors.orange),
+            title: Text(issue['issue_type']?.toString() ?? 'Supplier issue'),
+            subtitle: Text('${issue['severity'] ?? 'Normal'} · ${issue['description'] ?? ''}'),
+            isThreeLine: true,
+            trailing: IconButton(tooltip: 'Mark as resolved',
+              icon: const Icon(Icons.check_circle_outline), onPressed: () => _resolveSupplierIssue(id)),
+          ));
+        }),
+      ]),
+    );
+  }
+
+  Widget buildReports() {
+    final totalSales = _salesHistory.fold<double>(0, (sum, raw) {
+      final sale = raw as Map<String, dynamic>;
+      return sum + ((sale['total_amount'] as num?)?.toDouble() ?? 0);
+    });
+    return RefreshIndicator(
+      onRefresh: () async { await loadBackendData(); await _loadSalesHistory(); },
+      child: ListView(padding: const EdgeInsets.all(20), children: [
+        const Text('Reports', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6), const Text('A simple view of recorded sales and current stock. Pull down to refresh.'),
+        const SizedBox(height: 16),
+        Row(children: [
+          Expanded(child: statCard('Products', '${products.length}', Icons.inventory_2, Colors.blue)),
+          const SizedBox(width: 10),
+          Expanded(child: statCard('Low stock', '${products.where((p) => p.quantity <= p.minimumStock).length}', Icons.warning_amber, Colors.orange)),
+        ]),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: statCard('Bills loaded', '${_salesHistory.length}', Icons.receipt_long, const Color(0xFF16845B))),
+          const SizedBox(width: 10),
+          Expanded(child: statCard('Sales total', '₹${totalSales.toStringAsFixed(2)}', Icons.currency_rupee, Colors.deepPurple)),
+        ]),
+        const SizedBox(height: 20), const Text('Recent sales', style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
+        if (_salesLoading) const LinearProgressIndicator(),
+        if (_salesHistory.isEmpty && !_salesLoading) const Padding(
+          padding: EdgeInsets.symmetric(vertical: 16), child: Text('No sales have been recorded yet.')),
+        ..._salesHistory.take(30).map((raw) {
+          final sale = raw as Map<String, dynamic>;
+          final items = sale['items'] as List<dynamic>? ?? [];
+          final amount = (sale['total_amount'] as num?)?.toDouble() ?? 0;
+          return Card(child: ListTile(
+            leading: const Icon(Icons.receipt_long), title: Text('₹${amount.toStringAsFixed(2)}'),
+            subtitle: Text('${items.length} item lines · ${sale['payment_method'] ?? 'Payment not recorded'}'),
+            trailing: Text('#${sale['sale_id'] ?? ''}'),
+          ));
+        }),
+        const SizedBox(height: 16), const Text('Stock position', style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
+        ...products.take(30).map((product) => ListTile(
+          contentPadding: EdgeInsets.zero, title: Text(product.name), subtitle: Text(product.category),
+          trailing: Text('${product.quantity} ${product.unit}'),
+        )),
+      ]),
+    );
   }
 
   /// Displays application settings and the live backend connection status.
@@ -3060,13 +4318,43 @@ if (showMessage) {
                 return SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text(employee['full_name'].toString()),
-                  subtitle: Text(employee['email'].toString()),
+                  subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(employee['email'].toString()),
+                    DropdownButton<String>(
+                      value: ['manager', 'cashier', 'stock_manager'].contains(employee['job_role']) ? employee['job_role'].toString() : 'manager',
+                      isDense: true,
+                      items: const [
+                        DropdownMenuItem(value: 'manager', child: Text('Manager')),
+                        DropdownMenuItem(value: 'cashier', child: Text('Cashier')),
+                        DropdownMenuItem(value: 'stock_manager', child: Text('Stock manager')),
+                      ],
+                      onChanged: (value) { if (value != null) _setEmployeeJobRole(userId, value); },
+                    ),
+                  ]),
                   value: employee['is_active'] == true,
                   onChanged: (active) => _toggleEmployee(userId, active),
                 );
               }),
               if (!_employeesLoading && _employees.isEmpty)
                 const Text('No employees added yet.'),
+              if (_employeeInvitations.any((raw) => (raw as Map<String, dynamic>)['status'] == 'pending')) ...[
+                const Divider(),
+                const Text('Pending invitations', style: TextStyle(fontWeight: FontWeight.w600)),
+                ..._employeeInvitations.where((raw) => (raw as Map<String, dynamic>)['status'] == 'pending').map((raw) {
+                  final invitation = raw as Map<String, dynamic>;
+                  final invitationId = (invitation['invitation_id'] as num).toInt();
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(invitation['email']?.toString() ?? 'Employee invitation'),
+                    subtitle: Text('Expires: ${invitation['expires_at'] ?? 'in 7 days'}'),
+                    trailing: IconButton(
+                      tooltip: 'Cancel invitation',
+                      icon: const Icon(Icons.cancel_outlined),
+                      onPressed: () => _revokeEmployeeInvitation(invitationId),
+                    ),
+                  );
+                }),
+              ],
             ],
           ))),
         ],
@@ -3545,7 +4833,10 @@ class ReceivePurchaseDialog extends StatefulWidget {
 
 class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
   final Map<int, TextEditingController> _batchControllers = {};
+  final Map<int, TextEditingController> _quantityControllers = {};
   final Map<int, DateTime> _expiryDates = {};
+  final TextEditingController _invoiceNumberController = TextEditingController();
+  final TextEditingController _invoiceAmountController = TextEditingController();
 
   @override
   void initState() {
@@ -3553,6 +4844,8 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
     for (final item in widget.items) {
       final id = (item['purchase_item_id'] as num).toInt();
       _batchControllers[id] = TextEditingController();
+      final ordered = item['ordered_quantity'] ?? item['quantity'] ?? 0;
+      _quantityControllers[id] = TextEditingController(text: ordered.toString());
     }
   }
 
@@ -3561,6 +4854,11 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
     for (final controller in _batchControllers.values) {
       controller.dispose();
     }
+    for (final controller in _quantityControllers.values) {
+      controller.dispose();
+    }
+    _invoiceNumberController.dispose();
+    _invoiceAmountController.dispose();
     super.dispose();
   }
 
@@ -3577,19 +4875,37 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
       final id = (item['purchase_item_id'] as num).toInt();
       final batch = _batchControllers[id]!.text.trim();
       final expiry = _expiryDates[id];
-      if (batch.isEmpty || expiry == null) {
+      final received = double.tryParse(_quantityControllers[id]!.text.trim());
+      final ordered = double.tryParse((item['ordered_quantity'] ?? item['quantity'] ?? 0).toString()) ?? 0;
+      if (received == null || received < 0 || received > ordered ||
+          (received > 0 && (batch.isEmpty || expiry == null))) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Enter a batch number and expiry date for every line.')),
+          const SnackBar(content: Text('Enter a received quantity between zero and ordered quantity. Batch and expiry are required when any quantity is received.')),
         );
         return;
       }
       result.add({
         'purchase_item_id': id,
-        'batch_number': batch,
-        'expiry_date': expiry.toIso8601String().substring(0, 10),
+        'batch_number': received > 0 ? batch : null,
+        'expiry_date': received > 0 ? expiry!.toIso8601String().substring(0, 10) : null,
+        'received_quantity': received,
       });
     }
-    Navigator.of(context).pop(result);
+    final invoiceNumber = _invoiceNumberController.text.trim();
+    final invoiceAmountText = _invoiceAmountController.text.trim();
+    final invoiceAmount = double.tryParse(invoiceAmountText);
+    if ((invoiceNumber.isEmpty) != invoiceAmountText.isEmpty ||
+        (invoiceAmountText.isNotEmpty && (invoiceAmount == null || invoiceAmount <= 0))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter both a valid invoice number and invoice amount, or leave both blank.')),
+      );
+      return;
+    }
+    Navigator.of(context).pop({
+      'items': result,
+      'invoice_number': invoiceNumber.isEmpty ? null : invoiceNumber,
+      'invoice_amount': invoiceAmount,
+    });
   }
 
   @override
@@ -3601,7 +4917,18 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: widget.items.map((item) {
+            children: [
+              TextField(
+                controller: _invoiceNumberController,
+                decoration: const InputDecoration(labelText: 'Supplier invoice number (optional)'),
+              ),
+              TextField(
+                controller: _invoiceAmountController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Actual invoice amount (INR, optional)'),
+              ),
+              const Divider(height: 24),
+              ...widget.items.map((item) {
               final itemId = (item['purchase_item_id'] as num).toInt();
               final productId = (item['product_id'] as num).toInt();
               final expiry = _expiryDates[itemId];
@@ -3612,7 +4939,12 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
                   children: [
                     Text(_productName(productId),
                       style: const TextStyle(fontWeight: FontWeight.bold)),
-                    Text('Ordered quantity: ${item['quantity']}'),
+                    Text('Ordered quantity: ${item['ordered_quantity'] ?? item['quantity']}'),
+                    TextField(
+                      controller: _quantityControllers[itemId],
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Actually received quantity'),
+                    ),
                     TextField(
                       controller: _batchControllers[itemId],
                       decoration: const InputDecoration(labelText: 'Batch number'),
@@ -3636,7 +4968,8 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
                   ],
                 ),
               );
-            }).toList(),
+            }),
+            ],
           ),
         ),
       ),
@@ -3702,6 +5035,72 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
     }
   }
 
+  Future<void> _updateOrderStatus(int purchaseId, String status) async {
+    setState(() => _confirming.add(purchaseId));
+    try {
+      await ApiService.updateSupplierOrderStatus(purchaseId, status: status);
+      await _load();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Order marked $status.')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update order: $error')));
+    } finally {
+      if (mounted) setState(() => _confirming.remove(purchaseId));
+    }
+  }
+
+  Future<void> _editProfile() async {
+    final current = _profile ?? {};
+    final name = TextEditingController(text: current['name']?.toString() ?? '');
+    final contact = TextEditingController(text: current['contact_person']?.toString() ?? '');
+    final phone = TextEditingController(text: current['phone']?.toString() ?? '');
+    final address = TextEditingController(text: current['address']?.toString() ?? '');
+    final gstin = TextEditingController(text: current['gstin']?.toString() ?? '');
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit supplier profile'),
+        content: SingleChildScrollView(child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: name, decoration: const InputDecoration(labelText: 'Business name')),
+            TextField(controller: contact, decoration: const InputDecoration(labelText: 'Contact person')),
+            TextField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone')),
+            TextField(controller: address, maxLines: 2, decoration: const InputDecoration(labelText: 'Business address')),
+            TextField(controller: gstin, textCapitalization: TextCapitalization.characters, decoration: const InputDecoration(labelText: 'GSTIN (optional)')),
+          ],
+        )),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          FilledButton(onPressed: () {
+            if (name.text.trim().length < 2) return;
+            final value = <String, dynamic>{
+              'name': name.text.trim(),
+              'contact_person': contact.text.trim().isEmpty ? null : contact.text.trim(),
+              'phone': phone.text.trim().isEmpty ? null : phone.text.trim(),
+              'address': address.text.trim().isEmpty ? null : address.text.trim(),
+              'gstin': gstin.text.trim().isEmpty ? null : gstin.text.trim().toUpperCase(),
+              'notes': current['notes'],
+            };
+            Navigator.pop(dialogContext, value);
+          }, child: const Text('Save')),
+        ],
+      ),
+    );
+    name.dispose(); contact.dispose(); phone.dispose(); address.dispose(); gstin.dispose();
+    if (result == null) return;
+    try {
+      await ApiService.updateSupplierProfile(result);
+      await _load();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Supplier profile updated.')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update supplier profile: $error')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final name = _profile?['name']?.toString() ?? widget.identity;
@@ -3724,6 +5123,14 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
               Text(name, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               Text(widget.identity),
               if (_profile?['phone'] != null) Text(_profile!['phone'].toString()),
+              if (_profile?['address'] != null) Text(_profile!['address'].toString()),
+              if (_profile?['gstin'] != null) Text('GSTIN: ${_profile!['gstin']}'),
+              const SizedBox(height: 8),
+              Align(alignment: Alignment.centerRight, child: OutlinedButton.icon(
+                onPressed: _editProfile,
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Edit profile'),
+              )),
             ],
           ))),
           const SizedBox(height: 20),
@@ -3744,7 +5151,24 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
                   style: const TextStyle(fontWeight: FontWeight.bold)),
                 Text('Shop: ${order['shop_name']}'),
                 Text('Amount: ₹${order['total_amount']}'),
-                Text('Status: ${order['status']}'),
+                Text('Order: ${order['status']}'),
+                Text('Fulfilment: ${order['supplier_status'] ?? 'pending'}'),
+                if (order['supplier_status_note'] != null)
+                  Text(order['supplier_status_note'].toString()),
+                if (order['expected_delivery_date'] != null)
+                  Text('Expected delivery: ${order['expected_delivery_date']}'),
+                if (order['status'] == 'ordered' || order['status'] == 'confirmed')
+                  Align(alignment: Alignment.centerRight, child: PopupMenuButton<String>(
+                    enabled: !_confirming.contains(id),
+                    tooltip: 'Update fulfilment',
+                    onSelected: (value) => _updateOrderStatus(id, value),
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(value: 'preparing', child: Text('Preparing')),
+                      PopupMenuItem(value: 'dispatched', child: Text('Dispatched')),
+                      PopupMenuItem(value: 'delayed', child: Text('Delayed')),
+                    ],
+                    child: const Chip(label: Text('Update delivery status')),
+                  )),
                 const Divider(),
                 ...items.map((item) => Text('${item['product_name'] ?? 'Product #${item['product_id']}'} · Qty ${item['quantity']} ${item['unit'] ?? ''}')),
                 if (order['status'] == 'ordered')
@@ -3756,7 +5180,7 @@ class _SupplierHomePageState extends State<SupplierHomePage> {
             )));
           }),
           const Padding(padding: EdgeInsets.only(top: 16),
-            child: Text('Order confirmation is recorded in KiranaAI. Actual dispatch and delivery coordination still happen with the supplier.',
+            child: Text('Suppliers can report preparing, dispatched or delayed status. The shop records actual receipt and stock quantities.',
               style: TextStyle(color: Colors.black54))),
         ]),
       ),

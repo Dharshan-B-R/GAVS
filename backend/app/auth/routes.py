@@ -19,6 +19,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Request,
     status,
 )
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -453,6 +454,7 @@ def require_shop_membership(*allowed_membership_roles: str):
 
     def membership_checker(
         shop_id: int,
+        request: Request,
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db),
     ):
@@ -483,6 +485,80 @@ def require_shop_membership(*allowed_membership_roles: str):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Your account role does not match your shop membership",
             )
+
+        # Enforce employee job profiles centrally for every endpoint using
+        # require_shop_staff. Match complete route families and HTTP methods:
+        # substring checks can accidentally deny exact routes (e.g. /products)
+        # or grant access to unrelated routes containing the same text.
+        if membership_role == "employee" and "employee" in allowed:
+            path = request.url.path.lower()
+            method = request.method.upper()
+            job_role = (membership.job_role or "manager").lower()
+
+            is_product_lookup = path == "/products" or path.startswith("/products/")
+            is_inventory_lookup = path.startswith("/inventory/")
+            is_shop_inventory = path.startswith("/shops/") and "/inventory/" in path
+            is_shop_sales = path.startswith("/shops/") and path.endswith("/sales")
+
+            if job_role == "cashier":
+                is_sales = (path == "/sales" or is_shop_sales) and method in {"GET", "POST"}
+                is_read_only_lookup = (
+                    method == "GET"
+                    and (is_product_lookup or is_inventory_lookup or is_shop_inventory)
+                )
+                if not (is_sales or is_read_only_lookup):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Cashier access is limited to sales and read-only inventory lookup",
+                    )
+
+            elif job_role == "stock_manager":
+                is_product_management = is_product_lookup and method in {"GET", "POST", "PUT"}
+                is_inventory_management = (
+                    (is_inventory_lookup or is_shop_inventory)
+                    and method in {"GET", "POST"}
+                )
+                is_batch_management = (
+                    path == "/product-batches"
+                    or path.startswith("/product-batches/")
+                ) and method == "POST"
+                is_opening_batch = (
+                    path.startswith("/shops/")
+                    and "/products/" in path
+                    and path.endswith("/opening-batch")
+                    and method == "POST"
+                )
+                is_product_intelligence = (
+                    path.startswith("/shops/")
+                    and ("/product-aliases" in path or path.endswith("/product-name-matches"))
+                    and method in {"GET", "POST"}
+                )
+                is_sales = (path == "/sales" or is_shop_sales) and method in {"GET", "POST"}
+                is_purchase_order_visibility = (
+                    path.startswith("/shops/")
+                    and path.endswith("/purchase-orders")
+                    and method == "GET"
+                )
+                is_goods_receipt = (
+                    path.startswith("/shops/")
+                    and "/purchases/" in path
+                    and path.endswith("/receive")
+                    and method == "POST"
+                )
+                if not any((
+                    is_product_management,
+                    is_inventory_management,
+                    is_batch_management,
+                    is_opening_batch,
+                    is_product_intelligence,
+                    is_sales,
+                    is_purchase_order_visibility,
+                    is_goods_receipt,
+                )):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Stock manager access is limited to inventory, products, sales, goods receipt and purchase-order visibility",
+                    )
 
         return membership
 
@@ -679,6 +755,28 @@ def list_employee_invitations(
         "expires_at": row.expires_at,
         "created_at": row.created_at,
     } for row in rows]
+
+
+@router.delete("/shops/{shop_id}/employees/invitations/{invitation_id}")
+def revoke_employee_invitation(
+    shop_id: int,
+    invitation_id: int,
+    membership=Depends(require_shop_owner),
+    db: Session = Depends(get_db),
+):
+    invitation = db.query(ShopInvitation).filter(
+        ShopInvitation.id == invitation_id,
+        ShopInvitation.shop_id == shop_id,
+        ShopInvitation.invitation_type == "employee",
+    ).with_for_update().first()
+    if invitation is None:
+        raise HTTPException(404, "Employee invitation not found")
+    if invitation.status != "pending":
+        raise HTTPException(409, "Only pending invitations can be revoked")
+    invitation.status = "revoked"
+    invitation.responded_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"invitation_id": invitation.id, "status": invitation.status}
 
 
 @router.post("/employees/accept-invitation", status_code=201)

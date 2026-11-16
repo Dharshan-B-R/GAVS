@@ -128,6 +128,8 @@ def test_dead_stock_requires_mature_stock_and_no_recent_sales(db_session):
 
 
 def test_dead_stock_is_shop_scoped(db_session):
+    db_session.add(Shop(id=2, name="Second Inventory Shop"))
+    db_session.flush()
     own = _product(db_session, name="Own dead stock", quantity=5)
     other = _product(db_session, name="Other dead stock", quantity=9, shop_id=2)
     result = get_dead_stock(db_session, days=90, shop_id=1)

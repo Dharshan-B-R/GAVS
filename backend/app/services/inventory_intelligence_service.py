@@ -6,6 +6,7 @@ import FastAPI routes, mutate stock, create purchases, or place orders.
 Stock coverage always uses verified, unexpired batch quantities.
 """
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any
 
 from sqlalchemy import func
@@ -50,8 +51,16 @@ def _sales_subquery(db: Session, days: int, shop_id: int | None = None):
     return query.subquery()
 
 
-def _saleable_subquery(db: Session, shop_id: int | None = None):
+def _saleable_subquery(db: Session, shop_id: int | None = None, as_of_date: date | None = None):
     """Only verified, unexpired positive batch stock is considered saleable."""
+    if as_of_date is None and shop_id is not None:
+        from app.models.shop import Shop
+        shop = db.query(Shop).filter(Shop.id == shop_id).first()
+        if shop is not None:
+            try:
+                as_of_date = datetime.now(ZoneInfo(shop.timezone or "Asia/Kolkata")).date()
+            except ZoneInfoNotFoundError:
+                as_of_date = date.today()
     query = (
         db.query(
             ProductBatch.product_id.label("product_id"),
@@ -60,7 +69,7 @@ def _saleable_subquery(db: Session, shop_id: int | None = None):
         .join(Product, Product.id == ProductBatch.product_id)
         .filter(
             ProductBatch.is_verified.is_(True),
-            ProductBatch.expiry_date >= date.today(),
+            ProductBatch.expiry_date >= (as_of_date or date.today()),
             ProductBatch.quantity > 0,
         )
         .group_by(ProductBatch.product_id)

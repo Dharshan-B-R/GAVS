@@ -2,9 +2,9 @@ name: KiranaAI Phase 1 CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, phase2-intelligence-completion, phase2-permission-migration-hardening]
   pull_request:
-    branches: [main]
+    branches: [main, phase2-intelligence-completion]
 
 jobs:
   backend-tests:
@@ -41,6 +41,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
+      - name: Verify fresh database bootstrap
+        run: |
+          PGPASSWORD=postgres createdb -h localhost -U postgres kiranaai_fresh
+          DATABASE_URL=postgresql://postgres:postgres@localhost:5432/kiranaai_fresh python backend/scripts/bootstrap_fresh_database.py
+          cd backend
+          DATABASE_URL=postgresql://postgres:postgres@localhost:5432/kiranaai_fresh alembic current
       - name: Run backend tests
         working-directory: backend
         run: python -m pytest tests -v

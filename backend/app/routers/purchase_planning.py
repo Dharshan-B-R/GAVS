@@ -53,12 +53,15 @@ class ProposalDecision(BaseModel):
 
 class PurchaseReceiptItem(BaseModel):
     purchase_item_id: int = Field(gt=0)
-    batch_number: str = Field(min_length=1, max_length=100)
-    expiry_date: date
+    batch_number: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    expiry_date: Optional[date] = None
+    received_quantity: Optional[Decimal] = Field(default=None, ge=0, max_digits=14, decimal_places=3)
 
 
 class PurchaseReceiptCreate(BaseModel):
     items: list[PurchaseReceiptItem] = Field(min_length=1, max_length=100)
+    invoice_number: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    invoice_amount: Optional[Decimal] = Field(default=None, gt=0, max_digits=14, decimal_places=2)
 
 
 def _money(value: Decimal) -> Decimal:
@@ -375,6 +378,8 @@ def execute_approved_purchase_order(
             purchase_id=purchase.id,
             product_id=product_id,
             quantity=float(item["quantity"]),
+            ordered_quantity=float(item["quantity"]),
+            received_quantity=0,
             unit_price=float(item["unit_price"]),
             subtotal=float(item["subtotal"]),
         ))
@@ -417,6 +422,11 @@ def receive_approved_purchase_order(
         return {"purchase_id": purchase.id, "status": "received", "message": "Goods for this purchase order were already received"}
     if purchase.status not in {"ordered", "confirmed"}:
         raise HTTPException(409, "Only ordered or supplier-confirmed purchase orders can be received")
+    if (payload.invoice_number is None) != (payload.invoice_amount is None):
+        raise HTTPException(422, "Provide both invoice_number and invoice_amount, or leave both blank")
+    if payload.invoice_number is not None:
+        purchase.supplier_invoice_number = payload.invoice_number.strip()
+        purchase.invoice_amount = float(payload.invoice_amount)
 
     order_items = db.query(PurchaseItem).filter(
         PurchaseItem.purchase_id == purchase.id
@@ -428,10 +438,6 @@ def receive_approved_purchase_order(
     today = date.today()
     for order_item in order_items:
         receipt = submitted[order_item.id]
-        if receipt.expiry_date < today:
-            raise HTTPException(400, f"Batch for purchase item {order_item.id} is already expired")
-        if order_item.batch_id is not None:
-            raise HTTPException(409, f"Purchase item {order_item.id} already has a received batch")
         product = db.query(Product).filter(
             Product.id == order_item.product_id,
             Product.shop_id == shop_id,
@@ -440,7 +446,21 @@ def receive_approved_purchase_order(
         if product is None:
             raise HTTPException(409, "A purchase-order product is no longer active in this shop")
         before = float(product.quantity or 0)
-        received_quantity = float(order_item.quantity)
+        ordered_quantity = float(order_item.ordered_quantity if order_item.ordered_quantity is not None else order_item.quantity)
+        received_quantity = float(receipt.received_quantity) if receipt.received_quantity is not None else ordered_quantity
+        if received_quantity > ordered_quantity + 0.000001 or received_quantity < 0:
+            raise HTTPException(400, f"Received quantity for purchase item {order_item.id} must be between zero and ordered quantity")
+        if received_quantity == 0:
+            order_item.received_quantity = 0
+            if order_item.ordered_quantity is None:
+                order_item.ordered_quantity = ordered_quantity
+            continue
+        if order_item.batch_id is not None:
+            raise HTTPException(409, f"Purchase item {order_item.id} already has a received batch")
+        if not receipt.batch_number or receipt.expiry_date is None:
+            raise HTTPException(400, f"Batch number and expiry date are required for received purchase item {order_item.id}")
+        if receipt.expiry_date < today:
+            raise HTTPException(400, f"Batch for purchase item {order_item.id} is already expired")
         batch = ProductBatch(
             product_id=product.id,
             batch_number=receipt.batch_number.strip(),
@@ -459,20 +479,54 @@ def receive_approved_purchase_order(
             quantity_change=received_quantity,
             quantity_before=before,
             quantity_after=product.quantity,
-            reason=f"Goods received against PO {purchase.invoice_number}",
+            reason=f"Goods received ({received_quantity:g} of {ordered_quantity:g}) against PO {purchase.invoice_number}",
             performed_by=current_user.id,
             reference_type="purchase",
             reference_id=purchase.id,
         )
         db.add(movement)
         order_item.batch_id = batch.id
+        order_item.received_quantity = received_quantity
+        if order_item.ordered_quantity is None:
+            order_item.ordered_quantity = ordered_quantity
 
     purchase.status = "received"
-    purchase.purchase_date = datetime.now(timezone.utc)
+    purchase.received_at = datetime.now(timezone.utc)
+    purchase.purchase_date = purchase.received_at
     db.commit()
     return {
         "purchase_id": purchase.id,
         "status": purchase.status,
         "received_lines": len(order_items),
         "message": "Goods receipt recorded. New batches remain unverified until the shop's batch-verification workflow approves them.",
+    }
+
+
+@router.put("/shops/{shop_id}/purchases/{purchase_id}/expected-delivery")
+def set_expected_delivery_date(
+    shop_id: int,
+    purchase_id: int,
+    payload: dict,
+    membership=Depends(require_shop_owner),
+    db: Session = Depends(get_db),
+):
+    """Owner records the supplier-promised date used for on-time delivery metrics."""
+    raw_date = payload.get("expected_delivery_date")
+    try:
+        expected = date.fromisoformat(str(raw_date))
+    except (TypeError, ValueError):
+        raise HTTPException(422, "expected_delivery_date must use YYYY-MM-DD")
+    purchase = db.query(Purchase).filter(
+        Purchase.id == purchase_id, Purchase.shop_id == shop_id,
+    ).with_for_update().first()
+    if purchase is None:
+        raise HTTPException(404, "Purchase order not found")
+    if purchase.status not in {"ordered", "confirmed"}:
+        raise HTTPException(409, "Expected delivery date can only be set before goods are received")
+    purchase.expected_delivery_date = expected
+    db.commit()
+    return {
+        "purchase_id": purchase.id,
+        "expected_delivery_date": purchase.expected_delivery_date,
+        "message": "Supplier-promised delivery date recorded.",
     }
