@@ -70,7 +70,7 @@ def analyze_financial_position(db: Session, shop_id: int) -> dict:
             invoices.append({
                 "purchase_id": purchase.id,
                 "supplier_id": purchase.supplier_id,
-                "invoice_number": purchase.invoice_number,
+                "invoice_number": purchase.supplier_invoice_number or purchase.invoice_number,
                 "invoice_amount": str(invoice_value.quantize(Decimal("0.01"))),
                 "recorded_paid_amount": str(paid.quantize(Decimal("0.01"))),
                 "outstanding_amount": str(outstanding.quantize(Decimal("0.01"))),
