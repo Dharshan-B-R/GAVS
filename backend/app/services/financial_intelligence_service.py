@@ -1,23 +1,53 @@
-"""Read-only financial position from shop-owned ledgers.
+"""Shop-scoped khata receivables and supplier payable intelligence.
 
-Customer khata is not joined until Customer can be safely attributed to a shop.
-This avoids leaking or blending balances between shops.
+Legacy customers with NULL shop_id are excluded until an owner explicitly assigns
+them. Khata ageing is approximate because the ledger has no contractual due date.
 """
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.models.customer import Customer
+from app.models.khata_transaction import KhataTransaction
 from app.models.purchase import Purchase
 from app.models.purchase_payment import PurchasePayment
 
 
 def analyze_financial_position(db: Session, shop_id: int) -> dict:
-    purchases = db.query(Purchase).filter(
-        Purchase.shop_id == shop_id,
-        Purchase.status == "received",
-    ).order_by(Purchase.purchase_date.desc()).limit(500).all()
+    customer_rows = db.query(Customer).filter(
+        Customer.shop_id == shop_id, Customer.is_active.is_(True)
+    ).order_by(Customer.name.asc()).all()
+    receivables = []
+    total_receivable = Decimal("0.00")
+    for customer in customer_rows:
+        tx = db.query(KhataTransaction).filter(
+            KhataTransaction.customer_id == customer.id
+        ).order_by(KhataTransaction.created_at.asc()).all()
+        credits = sum((Decimal(str(row.amount)) for row in tx if row.transaction_type == "credit"), Decimal("0.00"))
+        repayments = sum((Decimal(str(row.amount)) for row in tx if row.transaction_type == "repayment"), Decimal("0.00"))
+        balance = credits - repayments
+        if balance <= 0:
+            continue
+        oldest = tx[0].created_at if tx else None
+        age_days = None
+        if oldest:
+            if oldest.tzinfo is None:
+                oldest = oldest.replace(tzinfo=timezone.utc)
+            age_days = max((datetime.now(timezone.utc) - oldest).days, 0)
+        total_receivable += balance
+        receivables.append({
+            "customer_id": customer.id,
+            "customer_name": customer.name,
+            "outstanding_amount": str(balance.quantize(Decimal("0.01"))),
+            "days_since_oldest_transaction": age_days,
+            "ageing_basis": "approximate_oldest_transaction_age",
+        })
 
+    purchases = db.query(Purchase).filter(
+        Purchase.shop_id == shop_id, Purchase.status.in_(["received", "partially_received"])
+    ).order_by(Purchase.purchase_date.desc()).limit(500).all()
     invoices = []
     total_invoiced = Decimal("0.00")
     total_paid = Decimal("0.00")
@@ -39,14 +69,22 @@ def analyze_financial_position(db: Session, shop_id: int) -> dict:
                 "recorded_paid_amount": str(paid.quantize(Decimal("0.01"))),
                 "outstanding_amount": str(outstanding.quantize(Decimal("0.01"))),
                 "purchase_date": purchase.purchase_date,
+                "expected_delivery_date": purchase.expected_delivery_date,
+                "received_at": purchase.received_at,
             })
 
     return {
         "analysis": "financial_position",
         "shop_id": shop_id,
         "receivables": {
-            "status": "unavailable",
-            "reason": "Customer records and khata transactions do not currently contain shop ownership. Aggregating them would risk exposing balances across shops.",
+            "status": "available",
+            "outstanding_amount": str(total_receivable.quantize(Decimal("0.01"))),
+            "customer_count": len(receivables),
+            "customers": receivables[:100],
+            "ageing_basis": "oldest recorded khata transaction, not contractual due date",
+            "unassigned_legacy_customer_count": db.query(func.count(Customer.id)).filter(
+                Customer.shop_id.is_(None), Customer.is_active.is_(True)
+            ).scalar(),
         },
         "payables": {
             "status": "available",
@@ -57,9 +95,9 @@ def analyze_financial_position(db: Session, shop_id: int) -> dict:
             "basis": "received purchase invoice amount minus recorded purchase payments",
         },
         "limitations": [
-            "Khata receivables remain unavailable until customers are shop-scoped",
-            "Supplier payable ageing is approximate because invoices have no contractual due dates",
+            "Legacy customers without an explicit shop assignment are excluded",
+            "Khata ageing is approximate because individual due dates are not stored",
             "Cash balance and bank/UPI settlement data are not present in these tables",
+            "Supplier payables include received purchase invoices and recorded payments only",
         ],
     }
-}
