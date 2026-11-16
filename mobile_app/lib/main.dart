@@ -2699,7 +2699,7 @@ if (showMessage) {
               return Card(child: ListTile(
                 leading: const Icon(Icons.local_shipping_outlined),
                 title: Text(order['purchase_order_number']?.toString() ?? 'Purchase order'),
-                subtitle: Text('Status: $status · ₹${order['total_amount']}'),
+                subtitle: Text('Status: $status · ₹${order['total_amount']} · Promised: ${order['expected_delivery_date'] ?? 'not set'}'),
                 trailing: (status == 'ordered' || status == 'confirmed')
                     ? Wrap(mainAxisSize: MainAxisSize.min, spacing: 4, children: [
                         IconButton(
