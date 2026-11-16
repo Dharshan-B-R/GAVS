@@ -2151,8 +2151,8 @@ if (showMessage) {
         ApiService.getEmployeeInvitations(),
       ]);
       if (mounted) setState(() {
-        _employees = values[0] as List<dynamic>;
-        _employeeInvitations = values[1] as List<dynamic>;
+        _employees = values[0];
+        _employeeInvitations = values[1];
         _employeesLoading = false;
       });
     } catch (error) {
