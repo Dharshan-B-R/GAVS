@@ -4264,16 +4264,17 @@ class _ReceivePurchaseDialogState extends State<ReceivePurchaseDialog> {
       final expiry = _expiryDates[id];
       final received = double.tryParse(_quantityControllers[id]!.text.trim());
       final ordered = double.tryParse((item['ordered_quantity'] ?? item['quantity'] ?? 0).toString()) ?? 0;
-      if (batch.isEmpty || expiry == null || received == null || received <= 0 || received > ordered) {
+      if (received == null || received < 0 || received > ordered ||
+          (received > 0 && (batch.isEmpty || expiry == null))) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Enter a batch, expiry date and valid received quantity (not above ordered quantity) for every line.')),
+          const SnackBar(content: Text('Enter a received quantity between zero and ordered quantity. Batch and expiry are required when any quantity is received.')),
         );
         return;
       }
       result.add({
         'purchase_item_id': id,
-        'batch_number': batch,
-        'expiry_date': expiry.toIso8601String().substring(0, 10),
+        'batch_number': received > 0 ? batch : null,
+        'expiry_date': received > 0 ? expiry!.toIso8601String().substring(0, 10) : null,
         'received_quantity': received,
       });
     }
