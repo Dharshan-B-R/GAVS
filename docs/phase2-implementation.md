@@ -1,38 +1,51 @@
 # Phase 2 implementation tracker
 
-Phase 2 is being delivered incrementally on top of the existing Phase 1 application. The following backend intelligence slices have been added to the repository. They are not considered production-verified until the consolidated backend test suite, Flutter checks, migration review and realistic-data validation are completed.
+Phase 2 is being delivered incrementally on top of Phase 1. Implementation status below is based on committed code, not runtime verification. The consolidated test suite, Flutter checks, migration review and realistic-data validation remain deliberately on hold per the project instruction.
 
-## Implemented backend slices
+## Intelligence foundation already implemented
 
-| Capability | Implementation | API | Safety / data rule |
+| Capability | Backend implementation | API | Guardrail |
 |---|---|---|---|
-| Product Name Intelligence | Shop-scoped aliases, normalization and exact/fuzzy matching | `/shops/{shop_id}/product-aliases`, `/shops/{shop_id}/product-name-matches` | Fuzzy matches require human confirmation; aliases do not merge products |
-| Expiry Intelligence | Batch expiry exposure and completed disposal-loss/credited-return summary | `GET /shops/{shop_id}/agents/expiry-risk` | Pending requests are not counted as realized losses; all at-risk batches contribute to totals |
-| Stockout Risk | Stockout timing from recorded sale velocity and verified unexpired stock | `GET /shops/{shop_id}/agents/stockout-risk` | Unknown demand stays unknown; no orders are created |
-| Seasonal Demand | Month-by-month observed sales patterns | `GET /shops/{shop_id}/agents/seasonal-demand` | Requires substantial history; missing months are not treated as zero; festival questions route to seasonal analysis |
-| Festival / Event Demand | Compare a caller-specified event window with its preceding baseline | `GET /shops/{shop_id}/agents/event-demand` | Descriptive comparison only; no fabricated festival multiplier |
-| Supplier Price Intelligence | Historical received-invoice price comparison by product and supplier | `GET /shops/{shop_id}/agents/supplier-prices` | Uses shop-owned products and received purchases only |
+| Product Name Intelligence | Shop-scoped aliases, normalization and exact/fuzzy matching | `/shops/{shop_id}/product-aliases`, `/shops/{shop_id}/product-name-matches` | Fuzzy matches require human confirmation |
+| Expiry Intelligence | Batch expiry exposure, recorded disposal loss and supplier-credit reconciliation | `GET /shops/{shop_id}/agents/expiry-risk` | Pending actions are not realized losses |
+| Dead Stock | Mature active products with positive inventory and no recorded sale | `GET /shops/{shop_id}/agents/dead-stock` | Missing history is not treated as proof of no demand |
+| Stockout Risk | Recorded sale velocity vs verified, unexpired saleable stock | `GET /shops/{shop_id}/agents/stockout-risk` | Unknown demand remains unknown |
+| Seasonal Demand | Observed monthly sales patterns | `GET /shops/{shop_id}/agents/seasonal-demand` | Unobserved months remain null |
+| Festival / Event Demand | Completed caller-defined event window vs preceding baseline | `GET /shops/{shop_id}/agents/event-demand` | No assumed festival multiplier |
+| Supplier Price Intelligence | Weighted price comparisons from received invoices | `GET /shops/{shop_id}/agents/supplier-prices` | Does not normalize pack size/tax/freight |
+| Demand Forecast | Sales velocity with selling-day coverage, observed weekday profile and confidence metadata | `GET /shops/{shop_id}/agents/forecast` | No imputed demand or automatic seasonal uplift |
+| Cash-aware Reorder Ranking | Saleable stock, lead time, safety stock, forecast confidence and owner-set budget prioritization | `GET /shops/{shop_id}/agents/reorder-recommendations` | Advisory only; no proposal or PO is created |
+| Supplier Performance | Recorded received-order volume/value and evidence availability | `GET /shops/{shop_id}/agents/supplier-performance` | Reliability/fill rate withheld until promised and short-receipt data exists |
+| Financial Position | Read-only supplier payables; khata returned unavailable unless customer ownership is shop-scoped | `GET /shops/{shop_id}/agents/financial-position` | Does not aggregate cross-shop customer balances |
+| Agent Orchestration | Expanded specialist routing, result aggregation and safe partial-result reporting | `POST /shops/{shop_id}/agents/orchestrate` | Staff restrictions retained; read-only |
 
-## Remaining Phase 2 work
+## Implemented in this completion branch
 
-1. Improve demand forecasting with validated seasonality and stockout-censored demand handling.
-2. Purchase optimizer: combine demand, saleable stock, lead time, supplier prices and owner-set cash budget.
-3. Supplier performance: delivery reliability, fill rate, price stability and issue history, only where source data exists.
-4. Financial intelligence: shop-scoped khata aging, cash-flow visibility, working-capital and profitability analysis.
-5. Multi-agent orchestration: structured intent routing, evidence summaries, confidence and safe fallbacks.
-6. Integrations: invoice OCR, WhatsApp, UPI reconciliation, voice and local-language support.
-7. Neighbourhood intelligence: opt-in, privacy-preserving aggregation with minimum cohort thresholds.
-8. Flutter screens, alerts, recommendation feedback and daily summary.
-9. Consolidated tests, authorization/isolation review, migration review and realistic-data validation.
+1. Forecast outputs now report selling-day coverage and observed weekday data. Sparse history is low confidence; no-sale periods are not treated as proven zero demand.
+2. Reorder recommendations now prioritize stockout urgency and forecast confidence, then fit ranked candidate recommendations within the configured owner cash budget. Deferred items remain visible.
+3. Supplier performance endpoint reports only recorded received purchase evidence. On-time rate, fill rate and issue rate remain unavailable because the current schema lacks promised dates, ordered-vs-received quantities and supplier-issue records.
+4. Financial position endpoint reports supplier payables from received purchases less recorded payments. Customer khata is intentionally withheld until customer ownership can be safely attributed to a shop; customer rows have no shop_id.
+5. Orchestrator understands expiry, financial and event intents and returns specialist results with explicit partial/insufficient evidence states.
+6. New API endpoints are staff-authorized and filtered using the requested shop id.
+
+## Remaining before Phase 2 can be called fully complete
+
+- Persist customer-to-shop ownership or shop-customer membership, then enable shop-scoped khata ageing.
+- Add promised delivery date, ordered quantity, received quantity and dispute/issue models before calculating true supplier performance.
+- Correctly model lost demand during stockouts with availability snapshots or POS out-of-stock events.
+- Add explicit festival calendar and locality configuration; event comparisons must remain grounded in actual recorded history.
+- Complete Flutter screens, API wiring, notifications, recommendation feedback and daily summaries.
+- Review migration compatibility and tenant isolation; add migrations only after confirming actual schema requirements.
+- Run consolidated backend tests, Flutter analysis/build, migration review and realistic-data validation only after explicit approval to test.
 
 ## API safety
 
 - Intelligence endpoints are read-only and require shop staff membership.
-- All analytics must filter by the requested `shop_id`.
-- AI recommendations do not spend money, create supplier commitments or execute purchases.
-- Purchase execution remains a separate workflow requiring explicit owner approval.
-- Insufficient history or missing observations must be reported rather than replaced with invented estimates.
+- All product/sales/purchase metrics are filtered by the requested shop.
+- Purchase recommendations do not create proposals, spend money, contact suppliers or place orders.
+- Purchase execution remains a separate owner-approved workflow.
+- Insufficient history, missing data and unavailable metrics are reported explicitly rather than fabricated.
 
 ## Validation status
 
-New backend tests have been added alongside the intelligence services. They have not yet been run as part of the requested consolidated validation pass. Do not treat the presence of tests or commits as evidence that CI or production migration has passed.
+**Testing is intentionally not run.** No test suite, Flutter analysis, migration, CI workflow or production data operation has been executed as part of this completion work. A code commit is not proof of test or production readiness.
