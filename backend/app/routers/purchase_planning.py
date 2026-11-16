@@ -425,7 +425,7 @@ def receive_approved_purchase_order(
     if (payload.invoice_number is None) != (payload.invoice_amount is None):
         raise HTTPException(422, "Provide both invoice_number and invoice_amount, or leave both blank")
     if payload.invoice_number is not None:
-        purchase.invoice_number = payload.invoice_number.strip()
+        purchase.supplier_invoice_number = payload.invoice_number.strip()
         purchase.invoice_amount = float(payload.invoice_amount)
 
     order_items = db.query(PurchaseItem).filter(
