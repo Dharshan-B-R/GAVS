@@ -43,9 +43,10 @@ def analyze_event_demand(
     if event_end > local_today + timedelta(days=1):
         raise ValueError("Event comparison is descriptive and requires a completed event window")
     baseline_start = event_start - timedelta(days=baseline_days)
-    event_start_dt = datetime.combine(event_start, time.min, tzinfo=timezone.utc)
-    event_end_dt = datetime.combine(event_end, time.min, tzinfo=timezone.utc)
-    baseline_start_dt = datetime.combine(baseline_start, time.min, tzinfo=timezone.utc)
+    local_tz = ZoneInfo(shop.timezone or "Asia/Kolkata")
+    event_start_dt = datetime.combine(event_start, time.min, tzinfo=local_tz).astimezone(timezone.utc)
+    event_end_dt = datetime.combine(event_end, time.min, tzinfo=local_tz).astimezone(timezone.utc)
+    baseline_start_dt = datetime.combine(baseline_start, time.min, tzinfo=local_tz).astimezone(timezone.utc)
 
     event_rows = (
         db.query(
