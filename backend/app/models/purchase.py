@@ -18,6 +18,7 @@ class Purchase(Base):
     expected_delivery_date = Column(Date, nullable=True, index=True)
     received_at = Column(DateTime(timezone=True), nullable=True, index=True)
     total_amount = Column(Float, nullable=False, default=0)
+    invoice_amount = Column(Float, nullable=True)
     payment_status = Column(String(30), nullable=False, default="pending")
     notes = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
