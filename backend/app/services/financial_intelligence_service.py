@@ -51,11 +51,17 @@ def analyze_financial_position(db: Session, shop_id: int) -> dict:
     invoices = []
     total_invoiced = Decimal("0.00")
     total_paid = Decimal("0.00")
+    unverified_purchase_orders = 0
     for purchase in purchases:
+        if purchase.proposal_id is not None and purchase.invoice_amount is None:
+            unverified_purchase_orders += 1
+            continue
         paid_value = db.query(func.coalesce(func.sum(PurchasePayment.amount), 0)).filter(
             PurchasePayment.purchase_id == purchase.id
         ).scalar()
-        invoice_value = Decimal(str(purchase.total_amount or 0))
+        invoice_value = Decimal(str(
+            purchase.invoice_amount if purchase.invoice_amount is not None else purchase.total_amount or 0
+        ))
         paid = Decimal(str(paid_value or 0))
         outstanding = max(invoice_value - paid, Decimal("0.00"))
         total_invoiced += invoice_value
@@ -91,6 +97,7 @@ def analyze_financial_position(db: Session, shop_id: int) -> dict:
             "outstanding_amount": str(max(total_invoiced - total_paid, Decimal("0.00")).quantize(Decimal("0.01"))),
             "currency": "INR",
             "open_invoice_count": len(invoices),
+            "unverified_received_purchase_order_count": unverified_purchase_orders,
             "invoices": invoices[:100],
             "basis": "received purchase invoice amount minus recorded purchase payments",
         },
@@ -98,6 +105,7 @@ def analyze_financial_position(db: Session, shop_id: int) -> dict:
             "Legacy customers without an explicit shop assignment are excluded",
             "Khata ageing is approximate because individual due dates are not stored",
             "Cash balance and bank/UPI settlement data are not present in these tables",
-            "Supplier payables include received purchase invoices and recorded payments only",
+            "Internal purchase orders are excluded from payables until an actual invoice number and invoice amount are captured",
+            "Supplier payables include recorded invoice amounts and recorded payments only",
         ],
     }
