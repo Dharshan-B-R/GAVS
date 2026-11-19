@@ -844,6 +844,7 @@ if (showMessage) {
     try {
       if (difference > 0) {
         final batchController = TextEditingController();
+        final quantityController = TextEditingController(text: difference.toString());
         DateTime? expiryDate;
         final details = await showDialog<Map<String, dynamic>>(
           context: context,
@@ -851,6 +852,12 @@ if (showMessage) {
             builder: (context, setDialogState) => AlertDialog(
               title: Text('Add stock · ${product.name}'),
               content: Column(mainAxisSize: MainAxisSize.min, children: [
+                TextField(
+                  controller: quantityController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(labelText: 'Quantity received'),
+                ),
+                const SizedBox(height: 12),
                 TextField(controller: batchController,
                   decoration: const InputDecoration(labelText: 'Batch number')),
                 const SizedBox(height: 12),
@@ -876,8 +883,11 @@ if (showMessage) {
                 TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
                 FilledButton(
                   onPressed: () {
-                    if (batchController.text.trim().isEmpty || expiryDate == null) return;
+                    final quantity = double.tryParse(quantityController.text.trim());
+                    if (quantity == null || quantity <= 0 || !quantity.isFinite ||
+                        batchController.text.trim().isEmpty || expiryDate == null) return;
                     Navigator.pop(dialogContext, {
+                      'quantity': quantity,
                       'batch': batchController.text.trim(),
                       'expiry': expiryDate!.toIso8601String().substring(0, 10),
                     });
@@ -889,10 +899,11 @@ if (showMessage) {
           ),
         );
         batchController.dispose();
+        quantityController.dispose();
         if (details == null) return;
         await ApiService.adjustStock(
           productId: product.id,
-          quantityChange: difference,
+          quantityChange: details['quantity'] as double,
           reason: 'Manual stock addition',
           batchNumber: details['batch'] as String,
           expiryDate: details['expiry'] as String,
